@@ -1,0 +1,1851 @@
+#!/usr/bin/env python3
+"""
+Калист Клиф — v8 · компактный боевой стол
+Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
+"""
+
+import streamlit as st
+import json
+import random
+import os
+import tempfile
+import shutil
+import math
+from uuid import uuid4
+from html import escape
+from datetime import datetime
+from pathlib import Path
+from copy import deepcopy
+
+SAVE_FILE = Path(__file__).parent / "kalista_save.json"
+ELEMENTS = ["Огонь", "Земля", "Вода", "Воздух", "Тьма", "Свет"]
+
+st.set_page_config(page_title="✧ Калист Клиф ✧", page_icon="🔥", layout="wide", initial_sidebar_state="expanded")
+st.markdown("""
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Quattrocento+Sans:wght@400;700&display=swap');
+.main-title{font-family:'Cinzel',serif;font-size:2rem;color:#E8DAEF;text-align:center;text-shadow:0 0 12px #4A235A;margin-bottom:.1rem}
+.subtitle{text-align:center;color:#BB8FCE;margin-bottom:.8rem}
+.section-h{font-family:'Cinzel',serif;color:#D7BDE2;font-size:1.1rem;border-bottom:2px solid #7D3C98;padding-bottom:2px;margin:.8rem 0 .4rem}
+div[data-testid="stMetricValue"]{font-size:1.25rem}
+.stButton>button{border-radius:8px;font-weight:600}
+.turn-now{background:#3D1A5C;border:2px solid #BB8FCE;border-radius:10px;padding:8px 12px;margin-bottom:6px}
+
+[data-testid="stLayoutWrapper"]:has(>.st-key-battle_header){position:sticky;top:3.5rem;z-index:50;background:#fff}
+.st-key-battle_header{background:#fff;padding:0 0 .35rem;border-bottom:1px solid #704080;gap:.35rem}
+[data-testid="stMainBlockContainer"]:has(.st-key-battle_header){padding-top:4rem;padding-bottom:2rem}
+[data-testid="stMainBlockContainer"]:has(.st-key-battle_header)>[data-testid="stVerticalBlock"]{gap:.65rem}
+.st-key-battle_header [data-testid="stRadio"] p{color:#33203b}
+.st-key-battle_header [data-testid="stButton"] button{background:#fff;color:#33203b;border:1px solid #d6cadd}
+.st-key-battle_header [data-testid="stButton"] button:disabled{background:#f3f0f6;color:#929099}
+.battle-card{background:#261531;border:1px solid #7d5291;border-radius:10px;padding:8px 12px;margin-bottom:6px}
+.battle-name{font-weight:700;color:#ecdff3;display:flex;justify-content:space-between;gap:8px;font-size:1rem}
+.battle-name span{font-weight:400;color:#cbb5d4;font-size:.85rem}
+.battle-values{display:flex;gap:12px;flex-wrap:wrap;margin-top:5px;font-size:.9rem;color:#ecdff3}
+.st-key-battle_header [data-testid="stHorizontalBlock"]{flex-wrap:nowrap!important;gap:.35rem}
+.st-key-battle_header [data-testid="stColumn"]{min-width:0!important;flex:1 1 0!important}
+.st-key-battle_header button{padding:.35rem .25rem;min-height:2.4rem;font-size:.9rem}
+.st-key-battle_header [role="radiogroup"]{gap:.3rem .7rem;flex-wrap:wrap}
+@media(max-width:640px){.block-container{padding-left:1rem;padding-right:1rem}.battle-name{flex-direction:column;gap:2px}.battle-values{gap:4px 12px}.battle-values b{font-size:.82rem}.st-key-battle_header button{font-size:.78rem}.st-key-battle_header [role="radiogroup"] label{font-size:.85rem}[data-testid="stLayoutWrapper"]:has(>.st-key-battle_header){top:3.5rem}}
+</style>
+""", unsafe_allow_html=True)
+
+# ===================== DEFAULT =====================
+DEFAULT = {
+    "name": "Калист Клиф", "race": "Тёмный эльф (Дроу)", "class": "Маг огня и тьмы",
+    "level": 21, "xp": 18450, "xp_to_next": 2150, "free_points": 0,
+    "hp_current": 420, "hp_max": 820, "mana_current": 0, "mana_max": 2950,
+    "base_stats": {"Сила":10,"Выносливость":15,"Ловкость":14,"Мудрость":10,"Интеллект":60,"Харизма":10,"Дух":35},
+    "equip_bonuses": {"Сила":0,"Выносливость":25,"Ловкость":0,"Мудрость":85,"Интеллект":235,"Харизма":0,"Дух":175},
+    "armor": 535, "phys_attack": 55,
+    "pepel": 0, "ten": 0, "buffs": "", "debuffs": "", "concentration": "", "last_school": None,
+    "gold": 84, "silver": 34, "copper": 0,
+    "inventory": [
+        {"name":"Зелье маны (большое)","type":"Расходник","qty":3,"desc":"+400 маны"},
+        {"name":"Зелье лечения","type":"Расходник","qty":2,"desc":"+250 HP"},
+        {"name":"Свиток «Щит теней»","type":"Свиток","qty":1,"desc":"Щит 300"},
+        {"name":"Кристалл пустоты","type":"Реагент","qty":5,"desc":""},
+        {"name":"Пепел древнего костра","type":"Реагент","qty":4,"desc":""},
+        {"name":"Чёрный дневник","type":"Книга","qty":1,"desc":""},
+        {"name":"Амулет старого дома","type":"Реликвия","qty":1,"desc":""},
+        {"name":"Набор алхимика","type":"Инструмент","qty":1,"desc":""},
+        {"name":"Факел вечного огня","type":"Инструмент","qty":1,"desc":""},
+    ],
+    "spells": [
+        {"id":1,"name":"Искровой заряд","base":35,"mana":18,"school":"Огонь","desc":"Быстрый сгусток","gives":"pepel","cd_max":0,"cd_left":0,"dot":None},
+        {"id":2,"name":"Огненный шар","base":80,"mana":35,"school":"Огонь","desc":"Шар пламени","gives":"pepel","cd_max":1,"cd_left":0,"dot":None},
+        {"id":3,"name":"Язык пламени","base":55,"mana":28,"school":"Огонь","desc":"Полоса огня","gives":"pepel","cd_max":0,"cd_left":0,"dot":None},
+        {"id":4,"name":"Пепел и тлен","base":20,"mana":22,"school":"Огонь","desc":"DoT 3 раунда","gives":"pepel","cd_max":2,"cd_left":0,"dot":{"name":"Горение","damage":18,"element":"Огонь","duration":3}},
+        {"id":5,"name":"Адское дыхание","base":120,"mana":55,"school":"Огонь","desc":"Конус огня","gives":"pepel","cd_max":3,"cd_left":0,"dot":None},
+        {"id":6,"name":"Теневой укол","base":45,"mana":20,"school":"Тьма","desc":"Игнор части брони","gives":"ten","cd_max":0,"cd_left":0,"dot":None},
+        {"id":7,"name":"Покров тьмы","base":0,"mana":30,"school":"Тьма","desc":"Щит","gives":None,"cd_max":4,"cd_left":0,"dot":None},
+        {"id":8,"name":"Проклятие слабости","base":15,"mana":25,"school":"Тьма","desc":"Слабость + DoT","gives":"ten","cd_max":2,"cd_left":0,"dot":{"name":"Проклятие","damage":10,"element":"Тьма","duration":3}},
+        {"id":9,"name":"Разряд бездны","base":95,"mana":45,"school":"Тьма","desc":"Шанс страха","gives":"ten","cd_max":2,"cd_left":0,"dot":None},
+        {"id":10,"name":"Пламя души","base":150,"mana":70,"school":"Огонь+Тьма","desc":"Ультиматив","gives":"both","cd_max":5,"cd_left":0,"dot":None},
+    ],
+    "equipment": {
+        "Оружие 1 (посох)":{"name":"Посох Магистра Огня и Тьмы","armor":0,"attack":50,"int":60,"wis":15,"spi":60,"fire":50,"dark":50,"earth":0,"water":0,"air":0,"light":0},
+        "Оружие 2":{"name":"","armor":0,"attack":0,"int":0,"wis":0,"spi":0,"fire":0,"dark":0,"earth":0,"water":0,"air":0,"light":0},
+        "Шлем":{"name":"Капюшон тьмы","armor":15,"attack":0,"int":20,"wis":10,"spi":10,"fire":0,"dark":0,"earth":0,"water":0,"air":0,"light":0},
+        "Наплечники":{"name":"Наплечники тьмы","armor":5,"attack":0,"int":20,"wis":10,"spi":10,"fire":0,"dark":5,"earth":0,"water":0,"air":0,"light":0},
+        "Перчатки":{"name":"Перчатки тьмы","armor":5,"attack":0,"int":10,"wis":5,"spi":15,"fire":0,"dark":5,"earth":0,"water":0,"air":0,"light":0},
+        "Нагрудник":{"name":"Нагрудник тьмы","armor":50,"attack":0,"int":40,"wis":0,"spi":30,"fire":0,"dark":5,"earth":0,"water":0,"air":0,"light":0},
+        "Пояс":{"name":"Пояс тьмы","armor":10,"attack":0,"int":10,"wis":5,"spi":5,"fire":0,"dark":5,"earth":0,"water":0,"air":0,"light":0},
+        "Штаны":{"name":"Поножи тьмы","armor":25,"attack":0,"int":15,"wis":0,"spi":5,"fire":0,"dark":5,"earth":0,"water":0,"air":0,"light":0},
+        "Сапоги":{"name":"Сапоги тьмы","armor":15,"attack":0,"int":10,"wis":0,"spi":10,"fire":0,"dark":5,"earth":0,"water":0,"air":0,"light":0},
+        "Серьга 1":{"name":"","armor":0,"attack":0,"int":0,"wis":0,"spi":0,"fire":0,"dark":0,"earth":0,"water":0,"air":0,"light":0},
+        "Серьга 2":{"name":"","armor":0,"attack":0,"int":0,"wis":0,"spi":0,"fire":0,"dark":0,"earth":0,"water":0,"air":0,"light":0},
+        "Ожерелье":{"name":"Фамильный Амулет","armor":0,"attack":0,"int":0,"wis":40,"spi":0,"fire":0,"dark":0,"earth":0,"water":0,"air":0,"light":0},
+        "Кольцо 1":{"name":"Кольцо разрушения","armor":0,"attack":0,"int":25,"wis":0,"spi":30,"fire":20,"dark":0,"earth":0,"water":0,"air":0,"light":0},
+        "Кольцо 2":{"name":"Кольцо сосредоточения","armor":0,"attack":0,"int":25,"wis":0,"spi":0,"fire":0,"dark":0,"earth":0,"water":0,"air":0,"light":0},
+        "Кольцо 3":{"name":"","armor":0,"attack":0,"int":0,"wis":0,"spi":0,"fire":0,"dark":0,"earth":0,"water":0,"air":0,"light":0},
+        "Кольцо 4":{"name":"","armor":0,"attack":0,"int":0,"wis":0,"spi":0,"fire":0,"dark":0,"earth":0,"water":0,"air":0,"light":0},
+    },
+    "ally": {
+        "name":"Союзник","hp":200,"hp_max":200,"armor":80,"dots":[],"initiative":12,
+        "attack_damage": 40,
+        "attack_type": "Физический",
+        "resists": {"Огонь":10,"Земля":10,"Вода":10,"Воздух":10,"Тьма":10,"Свет":10}
+    },
+    "enemies": [],
+    "next_enemy_id": 1,
+    "passives": {
+        # Расовые (справочные)
+        "darkvision": {"name":"Зрение в темноте","type":"racial","used":False,"desc":"Видит в полной темноте на 36м. Яркий свет может ослепить на 1 ход."},
+        "dark_resist": {"name":"Сопротивление тьме","type":"racial","used":False,"desc":"Базовое сопр. Тьме +35, доп. +10% к сопротивлению магии тьмы."},
+        "water_sense": {"name":"Чувствительность к воде","type":"racial","used":False,"desc":"Бонус к сопр. Воде. Долгий дождь вызывает дискомфорт."},
+        "drow_grace": {"name":"Дроу-грация","type":"racial","used":False,"desc":"+2 к скрытности и акробатике в темноте/слабом свете."},
+        # Классовые
+        "double_flame": {"name":"Двойное пламя","type":"class","used":False,"desc":"+5% урона, если предыдущее заклинание было другой школы (Огонь↔Тьма). Работает автоматически."},
+        "ash_lady": {"name":"Повелительница пепла","type":"class","used":False,"desc":"Огненные заклинания дают Пепел. При 5 — активация: след. огненное игнор 30% сопр. огню."},
+        "shadow_child": {"name":"Дитя тени","type":"class","used":False,"desc":"Тёмные заклинания дают Тень. При 5 — активация: невидимость 1 ход ИЛИ +20 к сопротивлениям (предел 95) на 2 раунда."},
+        "mana_reserve": {"name":"Магический резерв","type":"class","used":False,"desc":"Когда мана <20%, реген маны +50% на 3 тика. Пока учитывается ведущим вручную."},
+        # Особые (активируемые, раз в день/отдых)
+        "ritual_black_flame": {"name":"Ритуал Чёрного Пламени","type":"special","used":False,"desc":"Раз в день: следующее Пламя души +40% урона без долгого каста."},
+        "cold_calculation": {"name":"Холодный расчёт","type":"special","used":False,"desc":"В начале боя (1 ход): +10% шанса крита до конца боя."},
+        "memory_of_house": {"name":"Память Дома Клиф","type":"special","used":False,"desc":"Раз в долгий отдых: преимущество на проверку знаний о запретной магии."},
+    },
+    "soul_flame_boost": False,
+    "crit_boost_active": False,
+    "pepel_empower": False,   # следующее огненное игнор 30% fire resist
+    "ten_invis": False,       # невидимость 1 ход
+    "ten_resist_boost": 0,    # раундов +20 к сопротивлениям осталось
+    "status_effects": [],     # [{"name","duration","desc"}]
+    "portrait_url": "",
+    "crit_chance": 0.065,
+    "quests": [
+        {"id":1,"name":"Пепел старого дома","status":"В процессе","desc":""},
+        {"id":2,"name":"Кристалл пустоты","status":"Активен","desc":""},
+        {"id":3,"name":"Долг Серому","status":"Ожидание","desc":""},
+    ],
+    "notes": "Контроль важнее силы.",
+    "combat_log": [],
+    "resists": {"Огонь":75,"Земля":5,"Вода":10,"Воздух":5,"Тьма":95,"Свет":15},
+    # Очередь
+    "round": 1,
+    "turn_order": [],       # [{"kind":"player"/"ally"/"enemy","id":...,"name":...}]
+    "current_turn": 0,
+    "combat_active": False,
+}
+
+# ===================== ФОРМУЛЫ =====================
+def absorb(val):
+    return val / (val + 800) if val and val > 0 else 0.0
+
+def real_dmg(raw, resist):
+    return max(0, round(raw * (1 - absorb(resist))))
+
+def total_stat(d, n):
+    return d["base_stats"].get(n,0) + d["equip_bonuses"].get(n,0)
+
+def recalc_equip(d):
+    eq = d.get("equipment", {})
+    b = {k:0 for k in ["Сила","Выносливость","Ловкость","Мудрость","Интеллект","Харизма","Дух"]}
+    arm = atk = 0
+    resists = {e:0 for e in ELEMENTS}
+    for it in eq.values():
+        b["Интеллект"] += it.get("int",0)
+        b["Мудрость"] += it.get("wis",0)
+        b["Дух"] += it.get("spi",0)
+        arm += it.get("armor",0)
+        atk += it.get("attack",0)
+        resists["Огонь"] += it.get("fire",0)
+        resists["Тьма"] += it.get("dark",0)
+        resists["Земля"] += it.get("earth",0)
+        resists["Вода"] += it.get("water",0)
+        resists["Воздух"] += it.get("air",0)
+        resists["Свет"] += it.get("light",0)
+    b["Выносливость"] = 25
+    for key, value in d.get("stat_adjustments", {}).items():
+        b[key] = b.get(key, 0) + value
+    d["equip_bonuses"] = b
+    d["armor"] = max(0, arm + d.get("armor_adjustment", 0))
+    d["phys_attack"] = max(0, 5 + atk + d.get("attack_adjustment", 0))
+    # базовые + экип
+    base_r = {"Огонь":5,"Земля":5,"Вода":10,"Воздух":5,"Тьма":40,"Свет":15}
+    d["resists"] = {e: max(0, min(95, base_r[e] + resists[e]) + d.get("resist_adjustments", {}).get(e, 0)) for e in ELEMENTS}
+
+def recalc(d):
+    if "equipment" in d: recalc_equip(d)
+    intel=total_stat(d,"Интеллект"); wis=total_stat(d,"Мудрость"); cha=total_stat(d,"Харизма")
+    spi=total_stat(d,"Дух"); end=total_stat(d,"Выносливость"); agi=total_stat(d,"Ловкость")
+    d["mana_max"]=intel*10
+    d["hp_max"]=d["level"]*20 + end*10
+    d["spell_power"]=intel/5/100
+    d["mana_regen"]=round(spi*0.5)
+    d["initiative"]=round(agi/2 + wis/4)
+    d["control_resist"]=min(0.9, wis/4/100)
+    d["ritual_bonus"]=wis/5/100
+    d["fear_power"]=cha/3/100
+
+def gen_enemy(level, size, elite):
+    sm = {"Мелкий":0.6,"Обычный":1.0,"Крупный":1.5,"Огромный":2.2}.get(size,1.0)
+    em = 1.7 if elite else 1.0
+    m = sm * em
+    hp = int((40+level*18)*m*random.uniform(0.9,1.15))
+    armor = int((5+level*4)*m*random.uniform(0.85,1.15))
+    atk = int((8+level*3.5)*m*random.uniform(0.9,1.1))
+    resists = {}
+    for e in ELEMENTS:
+        resists[e] = min(90, max(0, int(level*2.0*m*random.uniform(0.6,1.3))))
+    # чуть сильнее в одной стихии
+    main = random.choice(ELEMENTS)
+    resists[main] = min(90, resists[main] + 15)
+    return {
+        "hp":hp,"hp_max":hp,"armor":armor,"attack_damage":atk,
+        "attack_type": random.choice(["Физический"]+ELEMENTS),
+        "resists": resists,
+        "dots": [],
+        "initiative": int(8 + level*0.6 + random.randint(-3,5)),
+    }
+
+def merge_defaults(default, saved):
+    """Дополняем вложенные поля, сохраняя пользовательские списки и значения."""
+    if isinstance(default, dict) and isinstance(saved, dict):
+        result = deepcopy(default)
+        for key, value in saved.items():
+            result[key] = merge_defaults(default[key], value) if key in default else deepcopy(value)
+        return result
+    return deepcopy(saved)
+
+
+def validate_tree(value, template, path="сохранение"):
+    if path.endswith(".gives") and value is None:
+        return
+    if isinstance(template, dict):
+        if not isinstance(value, dict):
+            raise ValueError(f"{path}: ожидается объект")
+        for key in template.keys() & value.keys():
+            validate_tree(value[key], template[key], f"{path}.{key}")
+    elif isinstance(template, list):
+        if not isinstance(value, list):
+            raise ValueError(f"{path}: ожидается список")
+        if template:
+            for i, item in enumerate(value):
+                validate_tree(item, template[0], f"{path}[{i}]")
+    elif isinstance(template, bool):
+        if not isinstance(value, bool):
+            raise ValueError(f"{path}: ожидается логическое значение")
+    elif isinstance(template, (int, float)):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"{path}: ожидается конечное число")
+        if isinstance(template, int) and not isinstance(value, int):
+            raise ValueError(f"{path}: ожидается целое число")
+    elif isinstance(template, str) and not isinstance(value, str):
+        raise ValueError(f"{path}: ожидается текст")
+
+
+def migrate(saved):
+    validate_tree(saved, DEFAULT)
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8):
+        raise ValueError("Версия сохранения не поддерживается")
+    data = merge_defaults(DEFAULT, saved)
+    for enemy in data["enemies"]:
+        enemy.setdefault("resists", {el: enemy.get("resist_" + code, 0)
+                                    for el, code in zip(ELEMENTS, ["fire", "earth", "water", "air", "dark", "light"])})
+        enemy.setdefault("dots", [])
+        enemy.setdefault("initiative", 10)
+        for key in ("id", "name", "hp", "hp_max", "armor"):
+            if key not in enemy:
+                raise ValueError(f"У противника отсутствует поле {key}")
+        validate_tree(enemy, {"id": 0, "name": "", "hp": 0, "hp_max": 1, "armor": 0,
+                              "resists": {el: 0 for el in ELEMENTS}, "initiative": 0,
+                              "attack_damage": 0, "attack_type": "", "dots": []})
+    ids = [enemy["id"] for enemy in data["enemies"]]
+    if len(ids) != len(set(ids)):
+        raise ValueError("Повторяющиеся ID противников")
+    data["next_enemy_id"] = max([data.get("next_enemy_id", 1)] + [i + 1 for i in ids])
+    for spell in data["spells"]:
+        spell.setdefault("cd_max", 0)
+        spell.setdefault("cd_left", 0)
+        spell.setdefault("dot", None)
+    if len({sp["id"] for sp in data["spells"]}) != len(data["spells"]):
+        raise ValueError("Повторяющиеся ID заклинаний")
+    data.setdefault("dots", [])
+    for target in [data, data["ally"]] + data["enemies"]:
+        for dot in target.get("dots", []):
+            validate_tree(dot, {"name": "", "damage": 0, "duration": 1, "element": ""})
+            if not {"name", "damage", "duration"} <= dot.keys():
+                raise ValueError("Неполные данные периодического эффекта")
+    # Сохраняем исходные итоговые значения вместо незаметного изменения баланса.
+    if "armor_adjustment" not in data:
+        reference = deepcopy(data)
+        recalc_equip(reference)
+        data["armor_adjustment"] = data["armor"] - reference["armor"]
+        data["attack_adjustment"] = data["phys_attack"] - reference["phys_attack"]
+        data["stat_adjustments"] = {k: data["equip_bonuses"].get(k, 0) - v
+                                    for k, v in reference["equip_bonuses"].items()}
+        data["resist_adjustments"] = {k: data["resists"].get(k, 0) - v
+                                      for k, v in reference["resists"].items()}
+    validate_tree(data, {"armor_adjustment": 0, "attack_adjustment": 0,
+                         "stat_adjustments": {k: 0 for k in data["base_stats"]},
+                         "resist_adjustments": {el: 0 for el in ELEMENTS},
+                         "dots": [{"name": "", "damage": 0, "duration": 1, "element": ""}]})
+    for spell in data["spells"]:
+        if not {"id", "name", "base", "mana", "school"} <= spell.keys():
+            raise ValueError("Неполные данные заклинания")
+        if spell["mana"] < 0 or spell["base"] < 0 or spell["cd_max"] < 0 or spell["cd_left"] < 0:
+            raise ValueError("Урон, стоимость и перезарядка не могут быть отрицательными")
+        if spell.get("dot") is not None:
+            dot = spell["dot"]
+            if not isinstance(dot, dict) or not {"name", "damage", "duration"} <= dot.keys():
+                raise ValueError("Неполные данные эффекта заклинания")
+            validate_tree(dot, {"name": "", "damage": 0, "duration": 1, "element": ""})
+    for token, target in participants(data):
+        effects = target.setdefault("effects", [])
+        if not isinstance(effects, list):
+            raise ValueError("Список эффектов повреждён")
+        for index, dot in enumerate(target.get("dots", [])):
+            if dot["duration"] <= 0:
+                continue
+            effects.append({"id": f"legacy-dot-{index}", "kind": "dot", "name": dot["name"],
+                            "value": dot["damage"], "element": dot.get("element", "Огонь"),
+                            "duration": dot["duration"], "source": "legacy", "desc": "",
+                            "applied_round": 0})
+        target["dots"] = []
+        for index, status in enumerate(target.get("status_effects", [])):
+            validate_tree(status, {"name": "", "duration": 1, "desc": ""})
+            if not {"name", "duration"} <= status.keys():
+                raise ValueError("Неполные данные статуса")
+            if status["duration"] <= 0:
+                continue
+            effects.append({"id": f"legacy-status-{index}", "kind": "note", "name": status["name"],
+                            "value": 0, "duration": status["duration"], "source": "legacy",
+                            "desc": status.get("desc", ""), "applied_round": 0})
+        if "status_effects" in target:
+            target["status_effects"] = []
+        for index, effect in enumerate(effects):
+            effect.setdefault("id", f"effect-{index}")
+            effect.setdefault("value", 0)
+            effect.setdefault("duration", None)
+            effect.setdefault("element", "Огонь")
+            effect.setdefault("source", "Ведущий")
+            effect.setdefault("desc", "")
+            effect.setdefault("applied_round", 0)
+            validate_effect(effect)
+        if len({effect["id"] for effect in effects}) != len(effects):
+            raise ValueError(f"Повторяющиеся ID эффектов: {token}")
+        hp_key, maximum_key = hp_fields(target)
+        nonnegative_int(target[hp_key], "HP")
+        if target[maximum_key] < 1:
+            raise ValueError("Максимум HP должен быть выше 0")
+    for spell in data["spells"]:
+        spell.setdefault("action", "shield" if spell["name"] == "Покров тьмы" and spell["base"] == 0 else "damage")
+        if spell["action"] not in ("damage", "heal", "shield", "note"):
+            raise ValueError("Неизвестное действие заклинания")
+        nonnegative_int(spell.get("effect_value", 0), "Сила эффекта заклинания")
+        nonnegative_int(spell.get("effect_duration", 0), "Длительность эффекта заклинания")
+    for item in data["inventory"]:
+        if "use" not in item:
+            # Только известные предметы с известными числами; новые названия не угадываем.
+            known = {"Зелье маны (большое)": {"kind": "mana", "value": 400},
+                     "Зелье лечения": {"kind": "heal", "value": 250},
+                     "Свиток «Щит теней»": {"kind": "shield", "value": 300}}
+            item["use"] = deepcopy(known.get(item["name"]))
+        validate_item_use(item.get("use"))
+        nonnegative_int(item["qty"], "Количество предметов")
+    for spell in data["spells"]:
+        if spell.get("dot"):
+            dot = spell["dot"]
+            validate_effect({"kind": "dot", "name": dot["name"], "value": dot["damage"],
+                             "duration": dot["duration"], "element": dot.get("element", "Огонь")})
+    data.setdefault("initiative_overrides", {})
+    data.setdefault("turn_excluded", [])
+    if not isinstance(data["initiative_overrides"], dict) or not isinstance(data["turn_excluded"], list):
+        raise ValueError("Настройки очереди повреждены")
+    known_tokens = {token for token, _ in participants(data)}
+    for token, value in data["initiative_overrides"].items():
+        if not isinstance(token, str): raise ValueError("Неверный участник очереди")
+        nonnegative_int(value, "Инициатива")
+    if any(not isinstance(token, str) for token in data["turn_excluded"]):
+        raise ValueError("Неверный список исключений из очереди")
+    data["initiative_overrides"] = {token: value for token, value in data["initiative_overrides"].items() if token in known_tokens}
+    data["turn_excluded"] = list(dict.fromkeys(token for token in data["turn_excluded"] if token in known_tokens))
+    data["schema_version"] = 8
+    return data
+
+
+def load():
+    if not SAVE_FILE.exists():
+        return migrate(deepcopy(DEFAULT))
+    try:
+        return migrate(json.loads(SAVE_FILE.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        st.error(f"Сохранение не загружено: {exc}. Исходный файл оставлен без изменений.")
+        st.info("Восстанови kalista_save.json из kalista_save.json.bak либо исправь файл и перезапусти приложение.")
+        st.stop()
+
+
+def save(d):
+    """Атомарная запись; предыдущая корректная версия хранится рядом в .bak."""
+    temporary = None
+    try:
+        migrate(d)
+        payload = json.dumps(d, ensure_ascii=False, indent=2, allow_nan=False)
+        if SAVE_FILE.exists() and SAVE_FILE.read_text(encoding="utf-8") == payload:
+            return True
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=SAVE_FILE.parent,
+                                         prefix=".kalista-", delete=False) as handle:
+            temporary = Path(handle.name)
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if SAVE_FILE.exists():
+            migrate(json.loads(SAVE_FILE.read_text(encoding="utf-8")))
+            shutil.copy2(SAVE_FILE, SAVE_FILE.with_suffix(".json.bak"))
+        os.replace(temporary, SAVE_FILE)
+        return True
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        st.error(f"Не удалось сохранить: {exc}. Предыдущее сохранение не перезаписано.")
+        return False
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
+
+
+def log(msg):
+    ts=datetime.now().strftime("%H:%M:%S")
+    st.session_state.data["combat_log"].insert(0,f"[{ts}] {msg}")
+    st.session_state.data["combat_log"]=st.session_state.data["combat_log"][:80]
+
+def spell_raw(base, power, dual=False, soul=False):
+    d=round(base*(1+power))
+    if dual: d=round(d*1.05)
+    if soul: d=round(d*1.40)
+    return d
+
+# ===================== ОБЩАЯ МЕХАНИКА =====================
+# Эти функции работают с данными, не зависят от Streamlit и имени персонажа.
+EFFECT_KINDS = {
+    "note": "Статус / заметка", "shield": "Щит", "dot": "Периодический урон",
+    "hot": "Периодическое лечение", "armor": "Поправка к броне", "resist": "Поправка к сопротивлению",
+}
+DAMAGE_TYPES = ["Физический"] + ELEMENTS
+
+
+def nonnegative_int(value, label):
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"{label}: требуется целое число от 0")
+    return value
+
+
+def hp_fields(target):
+    return ("hp_current", "hp_max") if "hp_current" in target else ("hp", "hp_max")
+
+
+def participant(data, token):
+    if token == "player":
+        return data
+    if token == "ally":
+        return data["ally"]
+    if isinstance(token, str) and token.startswith("enemy:"):
+        for enemy in data["enemies"]:
+            if token == f"enemy:{enemy['id']}":
+                return enemy
+    raise ValueError("Цель больше не существует")
+
+
+def participants(data):
+    return [("player", data), ("ally", data["ally"])] + [
+        (f"enemy:{enemy['id']}", enemy) for enemy in data["enemies"]]
+
+
+def participant_label(data, token):
+    target = participant(data, token)
+    suffix = f" · #{target['id']}" if token.startswith("enemy:") else ""
+    return target["name"] + suffix
+
+
+def validate_effect(effect):
+    if not isinstance(effect, dict):
+        raise ValueError("Эффект должен быть объектом")
+    if effect.get("kind") not in EFFECT_KINDS:
+        raise ValueError("Неизвестный вид эффекта")
+    if not isinstance(effect.get("name"), str) or not effect["name"].strip():
+        raise ValueError("Эффекту нужно название")
+    kind = effect["kind"]
+    value = effect.get("value", 0)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError("Величина эффекта должна быть целым числом")
+    if kind in ("shield", "dot", "hot") and value < 0:
+        raise ValueError("Щит, урон и лечение не могут быть отрицательными")
+    duration = effect.get("duration")
+    if duration is not None and (isinstance(duration, bool) or not isinstance(duration, int) or duration < 1):
+        raise ValueError("Длительность должна быть положительной или бессрочной")
+    if kind in ("dot", "hot") and duration is None:
+        raise ValueError("Периодическому эффекту нужно количество срабатываний")
+    if kind in ("dot", "resist") and effect.get("element", "Огонь") not in DAMAGE_TYPES:
+        raise ValueError("Неизвестный тип урона или сопротивления")
+    if kind == "resist" and effect.get("element", "Огонь") == "Физический":
+        raise ValueError("Физическую защиту задавай поправкой к броне")
+    if "id" in effect and (not isinstance(effect["id"], str) or not effect["id"]):
+        raise ValueError("Неверный ID эффекта")
+    if "applied_round" in effect:
+        nonnegative_int(effect["applied_round"], "Раунд применения")
+    for key in ("source", "desc"):
+        if key in effect and not isinstance(effect[key], str):
+            raise ValueError(f"{key}: ожидается текст")
+
+
+def add_effect(target, effect, round_number=0, stack=False):
+    validate_effect(effect)
+    entry = deepcopy(effect)
+    entry.setdefault("value", 0)
+    entry.setdefault("duration", None)
+    entry.setdefault("element", "Огонь")
+    entry.setdefault("source", "Ведущий")
+    entry.setdefault("desc", "")
+    entry["id"] = uuid4().hex
+    entry["applied_round"] = round_number
+    effects = target.setdefault("effects", [])
+    if not stack:
+        # Разные источники могут действовать независимо. Повтор того же эффекта
+        # заменяет величину и длительность, а не суммирует их скрыто.
+        for index, old in enumerate(effects):
+            if (old["kind"], old["name"], old.get("source", ""), old.get("element", "Огонь")) == (
+                    entry["kind"], entry["name"], entry["source"], entry["element"]):
+                entry["id"] = old["id"]
+                effects[index] = entry
+                return entry
+    effects.append(entry)
+    return entry
+
+
+def effective_defense(target, damage_type):
+    if damage_type not in DAMAGE_TYPES:
+        raise ValueError("Неизвестный тип урона")
+    if damage_type == "Физический":
+        return max(0, target.get("armor", 0) + sum(
+            effect["value"] for effect in target.get("effects", []) if effect["kind"] == "armor"))
+    resist = target.get("resists", {}).get(damage_type, 0)
+    # Сохраняем прежнее числовое правило Тени: +20 пунктов, с пределом 95.
+    if target.get("ten_resist_boost", 0) > 0:
+        resist = min(95, resist + 20)
+    return max(0, resist + sum(effect["value"] for effect in target.get("effects", [])
+                              if effect["kind"] == "resist" and effect["element"] == damage_type))
+
+
+def damage_preview(target, amount, damage_type="Физический", final=False,
+                   bypass_shields=False, defense_factor=1.0):
+    nonnegative_int(amount, "Урон")
+    if not isinstance(defense_factor, (int, float)) or not math.isfinite(defense_factor) or not 0 <= defense_factor <= 1:
+        raise ValueError("Неверная доля сопротивления")
+    defense = effective_defense(target, damage_type) * defense_factor
+    incoming = amount if final else real_dmg(amount, defense)
+    capacity = sum(effect["value"] for effect in target.get("effects", []) if effect["kind"] == "shield")
+    absorbed = 0 if bypass_shields else min(incoming, capacity)
+    hp_key, _ = hp_fields(target)
+    hp_loss = min(max(0, target[hp_key]), incoming - absorbed)
+    return {"incoming": incoming, "absorbed": absorbed, "hp_loss": hp_loss,
+            "overkill": incoming - absorbed - hp_loss, "defense": defense,
+            "hp_after": max(0, target[hp_key] - hp_loss)}
+
+
+def apply_damage(target, amount, damage_type="Физический", final=False,
+                 bypass_shields=False, defense_factor=1.0):
+    result = damage_preview(target, amount, damage_type, final, bypass_shields, defense_factor)
+    remaining = result["absorbed"]
+    if remaining:
+        # Порядок наложения виден в списке эффектов; щиты расходуются в том же порядке.
+        for effect in target.get("effects", []):
+            if effect["kind"] == "shield" and remaining:
+                used = min(effect["value"], remaining)
+                effect["value"] -= used
+                remaining -= used
+        target["effects"] = [effect for effect in target.get("effects", [])
+                             if effect["kind"] != "shield" or effect["value"] > 0]
+    target[hp_fields(target)[0]] = result["hp_after"]
+    return result
+
+
+def apply_healing(target, amount):
+    nonnegative_int(amount, "Лечение")
+    hp_key, maximum_key = hp_fields(target)
+    before = max(0, target[hp_key])
+    restored = min(amount, max(0, target[maximum_key] - before))
+    target[hp_key] = before + restored
+    return {"restored": restored, "excess": amount - restored, "hp_after": target[hp_key]}
+
+
+def restore_mana(target, amount):
+    nonnegative_int(amount, "Мана")
+    if "mana_current" not in target or "mana_max" not in target:
+        raise ValueError("У этой цели нет отдельного ресурса маны")
+    restored = min(amount, max(0, target["mana_max"] - target["mana_current"]))
+    target["mana_current"] += restored
+    return restored
+
+
+def damage_message(name, result):
+    return (f"{name}: после защиты {result['incoming']} · щит −{result['absorbed']} · "
+            f"HP −{result['hp_loss']} → {result['hp_after']}")
+
+
+def tick_periodic(target):
+    """Каждый периодический эффект тикает один раз в конце хода цели."""
+    messages = []
+    for effect in list(target.get("effects", [])):
+        if effect["kind"] not in ("dot", "hot"):
+            continue
+        if effect["kind"] == "dot":
+            result = apply_damage(target, effect["value"], effect["element"])
+            messages.append(f"«{effect['name']}»: " + damage_message(target["name"], result))
+        else:
+            result = apply_healing(target, effect["value"])
+            messages.append(f"«{effect['name']}»: {target['name']} +{result['restored']} HP")
+        effect["duration"] -= 1
+        if effect["duration"] <= 0:
+            target["effects"] = [item for item in target["effects"] if item["id"] != effect["id"]]
+            messages.append(f"«{effect['name']}» завершён: {target['name']}")
+    return messages
+
+
+def tick_round_effects(target, completed_round):
+    messages = []
+    kept = []
+    for effect in target.get("effects", []):
+        if (effect["kind"] not in ("dot", "hot") and effect["duration"] is not None
+                and effect.get("applied_round", 0) < completed_round):
+            effect["duration"] -= 1
+        if effect["duration"] is None or effect["duration"] > 0:
+            kept.append(effect)
+        else:
+            messages.append(f"«{effect['name']}» истёк: {target['name']}")
+    target["effects"] = kept
+    return messages
+
+
+def actor_target(data, actor):
+    if actor is None:
+        return None
+    token = f"enemy:{actor['id']}" if actor["kind"] == "enemy" else actor["kind"]
+    try:
+        return participant(data, token)
+    except ValueError:
+        return None
+
+
+def finish_round(data):
+    completed = data["round"]
+    messages = []
+    for _, target in participants(data):
+        messages.extend(tick_round_effects(target, completed))
+    for spell in data["spells"]:
+        if spell["cd_left"] > 0:
+            spell["cd_left"] -= 1
+    if data.get("ten_resist_boost", 0) > 0:
+        data["ten_resist_boost"] -= 1
+        if data["ten_resist_boost"] == 0:
+            messages.append("Бонус сопротивления от Тени истёк")
+    if data.get("ten_invis"):
+        data["ten_invis"] = False
+        messages.append("Невидимость спала")
+    data["round"] += 1
+    data["turn_order"] = build_turn_order(data)
+    data["current_turn"] = 0
+    messages.append(f"=== Раунд {data['round']} ===")
+    return messages
+
+
+def advance_turn(data):
+    if not data["combat_active"]:
+        raise ValueError("Бой не начат")
+    messages = []
+    if not data["turn_order"]:
+        messages.append("Нет участников с HP выше 0; восстанови HP и начни бой заново.")
+        return messages
+    target = actor_target(data, get_current_actor(data))
+    if target is not None and target[hp_fields(target)[0]] > 0:
+        messages.extend(tick_periodic(target))
+    data["current_turn"] += 1
+    # Удалённые и поверженные участники не получают пустые ходы.
+    while data["current_turn"] < len(data["turn_order"]):
+        target = actor_target(data, data["turn_order"][data["current_turn"]])
+        if target is not None and target[hp_fields(target)[0]] > 0:
+            return messages
+        data["current_turn"] += 1
+    messages.extend(finish_round(data))
+    return messages
+
+
+def spell_action(spell):
+    return spell.get("action", "damage")
+
+
+def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount=None):
+    """Проверяем всё до расходования ресурсов. Решения о целях/крите принимает UI."""
+    action = spell_action(spell)
+    if action not in ("damage", "heal", "shield", "note"):
+        raise ValueError("Неизвестное действие заклинания")
+    if spell["mana"] > data["mana_current"]:
+        raise ValueError("Не хватает маны")
+    if spell.get("cd_left", 0) > 0:
+        raise ValueError("Заклинание ещё на перезарядке")
+    if action in ("heal", "shield") or (action == "damage" and (spell["base"] > 0 or spell.get("dot"))):
+        if target is None:
+            raise ValueError("Выбери цель")
+    amount = spell["base"]
+    if action == "shield":
+        amount = spell.get("effect_value", 0) if shield_amount is None else shield_amount
+        nonnegative_int(amount, "Сила щита")
+        if amount == 0:
+            raise ValueError("Укажи силу щита: в исходных правилах её значение не задано")
+    if action == "heal":
+        amount = spell.get("effect_value", 0)
+        nonnegative_int(amount, "Лечение")
+        if amount == 0:
+            raise ValueError("Укажи величину лечения выше 0")
+    if final_damage is not None:
+        nonnegative_int(final_damage, "Итоговый урон")
+    dot_effect = None
+    if action == "damage" and spell.get("dot") and target is not None:
+        dot = spell["dot"]
+        dot_effect = {"kind": "dot", "name": dot["name"], "value": dot["damage"],
+                      "element": dot.get("element", "Огонь"), "duration": dot["duration"],
+                      "source": f"spell:{spell['id']}"}
+        validate_effect(dot_effect)
+    effect = None
+    if action in ("heal", "shield", "note"):
+        effect = {"kind": "shield" if action == "shield" else "note", "name": spell["name"],
+                  "value": amount if action == "shield" else 0,
+                  "duration": spell.get("effect_duration") or None,
+                  "source": f"spell:{spell['id']}", "desc": spell.get("desc", "")}
+        validate_effect(effect)
+    dual = {data.get("last_school"), spell["school"]} == {"Огонь", "Тьма"}
+    soul = bool(data.get("soul_flame_boost") and spell["name"] == "Пламя души")
+    raw = spell_raw(amount, data.get("spell_power", 0), dual, soul) if action == "damage" else amount
+    if crit and action == "damage":
+        raw = round(raw * 1.5)
+    dtype = "Огонь" if "Огонь" in spell["school"] else "Тьма"
+    empowered = bool(data.get("pepel_empower") and dtype == "Огонь" and action == "damage" and raw > 0)
+    # До изменения данных проверяем расчёт и цель.
+    if target is not None and action == "damage" and raw > 0:
+        damage_preview(target, raw if final_damage is None else final_damage, dtype,
+                       final=final_damage is not None, defense_factor=0.7 if empowered else 1.0)
+    data["mana_current"] -= spell["mana"]
+    data["last_school"] = spell["school"]
+    spell["cd_left"] = spell.get("cd_max", 0)
+    if spell.get("gives") in ("pepel", "both"):
+        data["pepel"] = min(5, data["pepel"] + 1)
+    if spell.get("gives") in ("ten", "both"):
+        data["ten"] = min(5, data["ten"] + 1)
+    if soul and action == "damage":
+        data["soul_flame_boost"] = False
+    messages = [f"«{spell['name']}» (−{spell['mana']} MP)" + (" · КРИТ" if crit and action == "damage" else "")]
+    if target is not None and action == "damage":
+        if raw > 0:
+            result = apply_damage(target, raw if final_damage is None else final_damage, dtype,
+                                  final=final_damage is not None, defense_factor=0.7 if empowered else 1.0)
+            messages.append(damage_message(target["name"], result))
+            if final_damage is not None:
+                messages.append("Урон назначен ведущим; щит учтён")
+            if empowered:
+                data["pepel_empower"] = False
+        if dot_effect is not None:
+            # В прежней версии повторные касты складывали DoT. Сохраняем это правило.
+            add_effect(target, dot_effect, data["round"] if data["combat_active"] else 0, stack=True)
+            messages.append(f"+ «{dot_effect['name']}» ({dot_effect['duration']} срабатывания)")
+    elif action == "heal":
+        result = apply_healing(target, amount)
+        messages.append(f"{target['name']}: +{result['restored']} HP (избыток {result['excess']})")
+    elif action in ("shield", "note"):
+        recipient = target if target is not None else data
+        add_effect(recipient, effect, data["round"] if data["combat_active"] else 0)
+        messages.append(f"{recipient['name']}: {spell['name']}" + (f" · щит {amount}" if action == "shield" else ""))
+    return messages
+
+
+def build_turn_order(data):
+    order = []
+    for token, target in participants(data):
+        if token in data.get("turn_excluded", []) or target[hp_fields(target)[0]] <= 0:
+            continue
+        kind = "enemy" if token.startswith("enemy:") else token
+        order.append({"kind": kind, "id": target["id"] if kind == "enemy" else 0,
+                      "name": target["name"],
+                      "init": data.get("initiative_overrides", {}).get(token, target.get("initiative", 10))})
+    order.sort(key=lambda actor: -actor["init"])
+    return order
+
+
+def refresh_turn_order(data):
+    """Добавление участника не должно переключать текущий ход."""
+    actor = get_current_actor(data)
+    order = build_turn_order(data)
+    # Новые участники вступают после текущего хода; порядок следующего раунда
+    # снова строится по инициативе.
+    if actor:
+        old = data["turn_order"]
+        latest = {(item["kind"], item["id"]): item for item in order}
+        for item in old:
+            replacement = latest.get((item["kind"], item["id"]))
+            if replacement:
+                item["name"] = replacement["name"]
+                item["init"] = replacement["init"]
+        known = {(item["kind"], item["id"]) for item in old}
+        old.extend(item for item in order if (item["kind"], item["id"]) not in known)
+    else:
+        data["turn_order"] = order
+        data["current_turn"] = 0
+
+
+def get_current_actor(data):
+    if not data["turn_order"]: return None
+    idx=data["current_turn"] % len(data["turn_order"])
+    return data["turn_order"][idx]
+
+def enemy_ai_act(data, enemy):
+    """Вспомогательное действие; интерфейс не запускает ИИ самостоятельно."""
+    targets = [target for token, target in participants(data) if token in ("player", "ally")
+               and target[hp_fields(target)[0]] > 0]
+    if not targets:
+        return
+    target = min(targets, key=lambda item: item[hp_fields(item)[0]])
+    if target is data and data.get("ten_invis"):
+        data["ten_invis"] = False
+        log(f"{enemy['name']}: атака отменена невидимостью")
+        return
+    result = apply_damage(target, enemy.get("attack_damage", 10), enemy.get("attack_type", "Физический"))
+    log(f"{enemy['name']} → " + damage_message(target["name"], result))
+
+
+def persist_and_rerun(label=None):
+    st.session_state["_reset_resource_widgets"] = True
+    if commit_current(label):
+        st.rerun()
+
+
+def validate_item_use(use):
+    if use is None:
+        return
+    if not isinstance(use, dict) or use.get("kind") not in ("heal", "mana", "shield"):
+        raise ValueError("Неизвестное действие предмета")
+    nonnegative_int(use.get("value"), "Величина действия предмета")
+    nonnegative_int(use.get("duration", 0), "Длительность действия предмета")
+
+
+def use_item(data, item):
+    use = item.get("use")
+    validate_item_use(use)
+    if not use or item["qty"] <= 0:
+        raise ValueError("Предмет недоступен")
+    amount = use["value"]
+    if amount <= 0:
+        raise ValueError("Укажи величину действия предмета выше 0")
+    if use["kind"] == "heal":
+        result = apply_healing(data, amount)
+        actual = result["restored"]
+        message = f"{item['name']}: +{actual} HP (избыток {result['excess']})"
+    elif use["kind"] == "mana":
+        actual = restore_mana(data, amount)
+        message = f"{item['name']}: +{actual} MP"
+    else:
+        add_effect(data, {"kind": "shield", "name": item["name"], "value": amount,
+                          "duration": use.get("duration") or None, "source": f"item:{item['name']}"},
+                   data["round"] if data["combat_active"] else 0)
+        actual = amount
+        message = f"{item['name']}: щит {amount}"
+    if actual > 0:
+        item["qty"] -= 1
+        return message + " · использован 1 предмет"
+    return message + " · предмет сохранён, ресурс уже заполнен"
+
+
+def show_effect_summary(target):
+    effects = target.get("effects", [])
+    if effects:
+        capacity = sum(effect["value"] for effect in effects if effect["kind"] == "shield")
+        if capacity:
+            st.caption(f"🛡 Щит: {capacity}")
+        st.caption("Эффекты: " + ", ".join(effect["name"] for effect in effects))
+
+
+def render_quick_action(data, token):
+    target = participant(data, token)
+    a1, a2 = st.columns(2)
+    operation = a1.selectbox("Действие", ["Урон", "Лечение", "Мана", "Щит"], key="gm_action")
+    amount = a2.number_input("Величина", min_value=0, value=0, key="gm_amount")
+    dtype = "Физический"
+    final = bypass = False
+    duration = 0
+    shield_name = "Щит ведущего"
+    if operation == "Урон":
+        dtype = st.selectbox("Тип урона", DAMAGE_TYPES, key="gm_damage_type")
+        mode = st.selectbox("Как применить", ["Рассчитать по защите", "Готовый урон — учесть щит", "Снять HP напрямую"], key="gm_damage_mode")
+        final = mode != "Рассчитать по защите"
+        bypass = mode == "Снять HP напрямую"
+        preview = damage_preview(target, amount, dtype, final=final, bypass_shields=bypass)
+        st.info("Предпросмотр: " + damage_message(target["name"], preview))
+    elif operation == "Лечение":
+        hp_key, maximum_key = hp_fields(target)
+        st.info(f"Восстановится {min(amount, max(0, target[maximum_key] - target[hp_key]))} HP")
+    elif operation == "Мана" and "mana_current" not in target:
+        st.caption("У этой цели мана пока не задана. Её можно вести в заметке.")
+    elif operation == "Щит":
+        shield_name = st.text_input("Название щита", value="Щит ведущего", key="gm_shield_name")
+        duration = st.number_input("Полных раундов щита (0 — бессрочно)", min_value=0, value=0, key="gm_shield_duration")
+    disabled = amount <= 0 or (operation == "Мана" and "mana_current" not in target)
+    if st.button("Применить действие", disabled=disabled, key="gm_apply"):
+        try:
+            if operation == "Урон":
+                result = apply_damage(target, amount, dtype, final=final, bypass_shields=bypass)
+                log("Ведущий: " + damage_message(target["name"], result))
+            elif operation == "Лечение":
+                result = apply_healing(target, amount)
+                log(f"Ведущий: {target['name']} +{result['restored']} HP (избыток {result['excess']})")
+                if data["combat_active"]: refresh_turn_order(data)
+            elif operation == "Мана":
+                actual = restore_mana(target, amount)
+                log(f"Ведущий: {target['name']} +{actual} MP")
+            else:
+                add_effect(target, {"kind": "shield", "name": shield_name.strip(), "value": amount,
+                                    "duration": duration or None, "source": "Ведущий"},
+                           data["round"] if data["combat_active"] else 0)
+                log(f"Ведущий: {target['name']} — щит {amount}")
+            persist_and_rerun()
+        except ValueError as exc:
+            st.error(str(exc))
+
+
+def render_effect_editor(data, token):
+    target = participant(data, token)
+    st.markdown("**Эффекты выбранного участника**")
+    st.caption("Урон и лечение: срабатывания в конце хода цели. Остальные: полные раунды; "
+               "раунд наложения не сокращает длительность. Вне боя эффекты меняются вручную.")
+    if not target.get("effects"):
+        st.caption("Нет активных эффектов")
+    visible = list(target.get("effects", []))
+    if len(visible) > 6:
+        query = st.text_input("Найти эффект", key="effect_search")
+        visible = [effect for effect in visible if query.casefold() in (effect["name"] + " " + effect.get("desc", "")).casefold()]
+        if len(visible) > 6:
+            pages = list(range((len(visible) + 5) // 6))
+            page_index = remembered_select("Страница эффектов", pages, f"effect_page_{token}", default=0,
+                                            format_func=lambda value: f"{value + 1} / {len(pages)}")
+            visible = visible[page_index * 6:(page_index + 1) * 6]
+        if not visible: st.caption("По запросу ничего не найдено")
+    for effect in visible:
+        count = effect["duration"]
+        unit = "срабатыв." if effect["kind"] in ("dot", "hot") else "полных р."
+        lifetime = "бессрочно" if count is None else f"{count} {unit}"
+        numeric = f" · {effect['value']}" if effect["kind"] != "note" else ""
+        element = f" ({effect['element']})" if effect["kind"] in ("dot", "resist") else ""
+        st.write(f"{effect['name']} — {EFFECT_KINDS[effect['kind']]}{numeric}{element} · {lifetime}")
+        if effect.get("desc"): st.caption(effect["desc"])
+        if st.button("Снять эффект", key=f"remove_effect_{token}_{effect['id']}"):
+            target["effects"] = [entry for entry in target["effects"] if entry["id"] != effect["id"]]
+            log(f"Ведущий снял «{effect['name']}»: {target['name']}")
+            persist_and_rerun()
+    with st.form("gm_add_effect"):
+        kind = st.selectbox("Вид эффекта", list(EFFECT_KINDS), format_func=lambda value: EFFECT_KINDS[value])
+        name = st.text_input("Название эффекта")
+        # В форме вид не обновляется до отправки, поэтому поля остаются общими.
+        value = st.number_input("Величина (отрицательная допустима для поправок)", value=0, step=1)
+        element = st.selectbox("Стихия / тип периодического урона", DAMAGE_TYPES)
+        duration = st.number_input("Длительность / число срабатываний (0 — бессрочно)", min_value=0, value=3)
+        description = st.text_input("Описание эффекта")
+        stack = st.checkbox("Добавить отдельно, даже если такой эффект уже есть")
+        if st.form_submit_button("Наложить эффект"):
+            try:
+                entry = {"kind": kind, "name": name.strip(), "value": value, "element": element,
+                         "duration": duration or None, "source": "Ведущий", "desc": description}
+                add_effect(target, entry, data["round"] if data["combat_active"] else 0, stack=stack)
+                log(f"Ведущий: «{name.strip()}» → {target['name']}")
+                persist_and_rerun()
+            except ValueError as exc:
+                st.error(str(exc))
+    c1, c2 = st.columns(2)
+    if c1.button("Один тик урона / лечения вручную", key="gm_tick_periodic"):
+        for message in tick_periodic(target): log("Ручной тик: " + message)
+        if data["combat_active"]: refresh_turn_order(data)
+        persist_and_rerun()
+    if c2.button("Уменьшить длительности на раунд", key="gm_tick_duration"):
+        for message in tick_round_effects(target, data["round"] + 1): log("Ведущий: " + message)
+        persist_and_rerun()
+
+
+
+def actor_token(actor):
+    return f"enemy:{actor['id']}" if actor["kind"] == "enemy" else actor["kind"]
+
+
+def set_initiative(data, token, value):
+    participant(data, token)
+    nonnegative_int(value, "Инициатива")
+    data.setdefault("initiative_overrides", {})[token] = value
+    # Уже сыгранные ходы и текущий актёр остаются на месте.
+    if data["combat_active"] and data["turn_order"]:
+        current = data["current_turn"]
+        prefix = data["turn_order"][:current + 1]
+        tail = data["turn_order"][current + 1:]
+        for actor in data["turn_order"]:
+            if actor_token(actor) == token:
+                actor["init"] = value
+        tail.sort(key=lambda actor: -actor["init"])
+        data["turn_order"] = prefix + tail
+
+
+def move_in_queue(data, token, offset):
+    if offset not in (-1, 1):
+        raise ValueError("Разрешён сдвиг на одну позицию")
+    order = data["turn_order"]
+    selected = next((i for i, actor in enumerate(order) if actor_token(actor) == token), None)
+    if selected is None:
+        raise ValueError("Участника нет в очереди")
+    destination = selected + offset
+    if not 0 <= destination < len(order):
+        return False
+    current = get_current_actor(data)
+    order[selected], order[destination] = order[destination], order[selected]
+    if current:
+        data["current_turn"] = next(i for i, actor in enumerate(order) if actor_token(actor) == actor_token(current))
+    return True
+
+
+def exclude_from_queue(data, token):
+    participant(data, token)
+    excluded = data.setdefault("turn_excluded", [])
+    if token not in excluded: excluded.append(token)
+    current = get_current_actor(data)
+    index = data["current_turn"]
+    data["turn_order"] = [actor for actor in data["turn_order"] if actor_token(actor) != token]
+    if not data["turn_order"]:
+        data["current_turn"] = 0
+        return []
+    if current and actor_token(current) != token:
+        data["current_turn"] = next(i for i, actor in enumerate(data["turn_order"]) if actor_token(actor) == actor_token(current))
+    else:
+        data["current_turn"] = index
+        if index >= len(data["turn_order"]):
+            return finish_round(data)
+    return []
+
+
+def return_to_queue(data, token):
+    target = participant(data, token)
+    data["turn_excluded"] = [item for item in data.get("turn_excluded", []) if item != token]
+    if target[hp_fields(target)[0]] > 0 and data["combat_active"]:
+        refresh_turn_order(data)
+
+
+def add_history(history, before, after, label, limit=20):
+    if before == after:
+        return False
+    history.append({"data": deepcopy(before), "label": label})
+    del history[:-limit]
+    return True
+
+
+def commit_current(label=None):
+    data = st.session_state.data
+    recalc(data)
+    previous = st.session_state.get("_committed_data", deepcopy(data))
+    if not save(data):
+        return False
+    if label is None:
+        old_log = previous.get("combat_log", [])
+        new_log = data.get("combat_log", [])
+        label = new_log[0].split("] ", 1)[-1] if new_log and new_log != old_log else "Редактирование"
+    add_history(st.session_state.setdefault("_undo_history", []), previous, data, label)
+    st.session_state["_committed_data"] = deepcopy(data)
+    return True
+
+
+def undo_last_action():
+    history = st.session_state.get("_undo_history", [])
+    if not history:
+        return False
+    entry = history[-1]
+    restored = deepcopy(entry["data"])
+    recalc(restored)
+    restored["combat_log"].insert(0, f"[{datetime.now().strftime('%H:%M:%S')}] Отменено: {entry['label']}")
+    restored["combat_log"] = restored["combat_log"][:80]
+    if not save(restored):
+        return False
+    history.pop()
+    st.session_state.data = restored
+    st.session_state["_committed_data"] = deepcopy(restored)
+    # Иначе значения созданных ранее полей могут немедленно вернуть отменённое действие.
+    keep = {"data", "_committed_data", "_undo_history", "page", "battle_section", "_battle_preferences"}
+    for key in list(st.session_state):
+        if key not in keep: del st.session_state[key]
+    st.rerun()
+
+
+def remembered_select(label, options, key, default=None, **kwargs):
+    """Сохраняем выбор между экранами, даже когда Streamlit удаляет скрытый виджет."""
+    prefs = st.session_state.setdefault("_battle_preferences", {})
+    candidate = st.session_state.get(key, prefs.get(key, default))
+    if candidate not in options:
+        candidate = default if default in options else options[0]
+    if st.session_state.get(key) not in options:
+        st.session_state[key] = candidate
+    value = st.selectbox(label, options, key=key, **kwargs)
+    prefs[key] = value
+    return value
+
+
+def reset_participant_widgets():
+    st.session_state["_reset_resource_widgets"] = True
+
+
+def render_battle_header(data):
+    actor = get_current_actor(data) if data["combat_active"] else None
+    turn = f"Раунд {data['round']} · {actor['name']}" if actor else "Бой не начат" if not data["combat_active"] else "Нет активных участников"
+    shield = sum(effect["value"] for effect in data.get("effects", []) if effect["kind"] == "shield")
+    with st.container(key="battle_header"):
+        st.markdown(f"""<div class="battle-card"><div class="battle-name">{escape(data['name'])} <span>{escape(turn)}</span></div>
+        <div class="battle-values"><b>HP {data['hp_current']}/{data['hp_max']}</b><b>MP {data['mana_current']}/{data['mana_max']}</b>
+        <b>Щит {shield}</b><b>Пепел {data['pepel']}/5 · Тень {data['ten']}/5</b></div></div>""", unsafe_allow_html=True)
+        b1, b2, b3, b4 = st.columns(4)
+        if b1.button("Бой", disabled=data["combat_active"], key="battle_start", use_container_width=True):
+            data["combat_active"] = True
+            for _, target in participants(data):
+                for effect in target.get("effects", []): effect["applied_round"] = 0
+            data["round"] = 1
+            data["turn_order"] = build_turn_order(data)
+            data["current_turn"] = 0
+            log("=== Бой начат. Раунд 1 ===")
+            persist_and_rerun("Начало боя")
+        if b2.button("Ход", disabled=not data["combat_active"] or not data["turn_order"], key="battle_next", use_container_width=True):
+            for message in advance_turn(data): log(message)
+            persist_and_rerun("Следующий ход")
+        history = st.session_state.get("_undo_history", [])
+        hint = f"Отменить: {history[-1]['label']}" if history else "Нет действий для отмены"
+        if b3.button("Отмена", disabled=not history, key="battle_undo", help=hint, use_container_width=True):
+            undo_last_action()
+        if b4.button("Стоп", disabled=not data["combat_active"], key="battle_stop", use_container_width=True):
+            data["combat_active"] = False
+            data["turn_order"] = []
+            data["crit_boost_active"] = False
+            log("=== Бой окончен ===")
+            persist_and_rerun("Завершение боя")
+        prefs = st.session_state.setdefault("_battle_preferences", {})
+        if "battle_section" not in st.session_state:
+            st.session_state["battle_section"] = prefs.get("battle_section", "Калиста")
+        selected = st.radio("Раздел боя", ["Калиста", "Участники", "Эффекты", "Очередь", "Журнал"],
+                            key="battle_section", horizontal=True, label_visibility="collapsed")
+        prefs["battle_section"] = selected
+
+
+def render_selected_spell(data, target):
+    if not data["spells"]:
+        st.info("Заклинаний пока нет. Добавь их на странице «Заклинания».")
+        return
+    spells = {spell["id"]: spell for spell in data["spells"]}
+    sid = remembered_select("Способность", list(spells), "battle_spell", default=data["spells"][0]["id"],
+                            format_func=lambda value: f"{spells[value]['name']} · {spells[value]['mana']} MP" +
+                            (f" · КД {spells[value]['cd_left']}" if spells[value]['cd_left'] else ""))
+    spell = spells[sid]
+    action = spell_action(spell)
+    dual = {data.get("last_school"), spell["school"]} == {"Огонь", "Тьма"}
+    soul = data.get("soul_flame_boost") and spell["name"] == "Пламя души"
+    raw = spell_raw(spell["base"], data.get("spell_power", 0), dual, soul) if action == "damage" else spell.get("effect_value", 0)
+    st.caption(f"{spell.get('desc', '')} · Мана {spell['mana']} · КД {spell.get('cd_left', 0)}/{spell.get('cd_max', 0)}")
+    shield_amount = None
+    if action == "shield":
+        shield_amount = st.number_input("Сила щита", min_value=0, value=spell.get("effect_value", 0), key=f"cast_shield_{sid}")
+        if not shield_amount: st.caption("Сила щита в правилах не задана — укажи её перед применением.")
+    crit_mode = "Без крита"
+    override = False
+    final_damage = 0
+    if action == "damage":
+        with st.expander("Крит и ручной урон", expanded=False):
+            crit_mode = remembered_select("Крит", ["Без крита", "Крит ведущего", "Бросок"], "battle_crit", default="Без крита")
+            override = st.checkbox("Назначить итоговый урон вручную", key="battle_override")
+            final_damage = st.number_input("Готовый урон (щит будет учтён)", min_value=0, value=0,
+                                           disabled=not override, key="battle_final_damage")
+        dtype = "Огонь" if "Огонь" in spell["school"] else "Тьма"
+        preview_raw = round(raw * 1.5) if crit_mode == "Крит ведущего" else raw
+        if raw > 0:
+            preview = damage_preview(target, final_damage if override else preview_raw, dtype, final=override,
+                                     defense_factor=0.7 if data.get("pepel_empower") and dtype == "Огонь" else 1.0)
+            st.info(damage_message(target["name"], preview) + (" · до броска крита" if crit_mode == "Бросок" and not override else ""))
+        if spell.get("dot"):
+            dot = spell["dot"]
+            st.caption(f"+ {dot['name']}: {dot['damage']} {dot.get('element', 'Огонь')} × {dot['duration']} срабатывания")
+    elif action == "heal":
+        hp_key, maximum_key = hp_fields(target)
+        st.info(f"{target['name']}: восстановится {min(raw, max(0, target[maximum_key] - target[hp_key]))} HP")
+    elif action == "shield":
+        st.info(f"{target['name']}: щит {shield_amount} · " + (f"{spell['effect_duration']} полных раундов" if spell.get("effect_duration") else "бессрочно"))
+    else:
+        st.info(f"{target['name']}: статус «{spell['name']}»")
+    can = data["mana_current"] >= spell["mana"] and spell.get("cd_left", 0) == 0
+    if action == "shield": can = can and shield_amount > 0
+    if action == "heal": can = can and raw > 0
+    if action == "damage": can = can and target[hp_fields(target)[0]] > 0
+    if st.button("Применить способность", key=f"cast_{sid}", disabled=not can, type="primary", use_container_width=True):
+        chance = min(1.0, max(0.0, data.get("crit_chance", .065) + (.10 if data.get("crit_boost_active") else 0)))
+        crit = action == "damage" and not override and (crit_mode == "Крит ведущего" or (crit_mode == "Бросок" and random.random() < chance))
+        try:
+            for message in cast_spell(data, spell, target, crit=crit,
+                                      final_damage=final_damage if override and action == "damage" else None,
+                                      shield_amount=shield_amount): log(message)
+            if data["combat_active"]: refresh_turn_order(data)
+            persist_and_rerun(f"Способность: {spell['name']}")
+        except ValueError as exc:
+            st.error(str(exc))
+    if not can:
+        reasons = []
+        if data["mana_current"] < spell["mana"]: reasons.append("не хватает маны")
+        if spell.get("cd_left", 0): reasons.append("способность на перезарядке")
+        if action == "damage" and target[hp_fields(target)[0]] == 0: reasons.append("у цели 0 HP")
+        if action in ("shield", "heal") and (shield_amount if action == "shield" else raw) == 0: reasons.append("не задана сила эффекта")
+        st.caption("Применение недоступно: " + ", ".join(reasons))
+    with st.expander("Предметы Калисты", expanded=False):
+        usable = [(i, item) for i, item in enumerate(data["inventory"]) if item.get("use") and item["qty"] > 0 and item["use"]["value"] > 0]
+        if not usable:
+            st.caption("Нет доступных расходников. Действия предметов настраиваются в инвентаре.")
+        else:
+            indices = [i for i, _ in usable]
+            index = remembered_select("Предмет", indices, "battle_item", default=indices[0],
+                                      format_func=lambda i: f"{data['inventory'][i]['name']} ×{data['inventory'][i]['qty']}")
+            if st.button("Применить к Калисте", key="battle_use_item", use_container_width=True):
+                log(use_item(data, data["inventory"][index]))
+                persist_and_rerun(f"Предмет: {data['inventory'][index]['name']}")
+    with st.expander("Пепел, Тень и особые умения", expanded=False):
+        p1, p2 = st.columns(2)
+        if p1.button("🔥 Усилить огонь", key="pep_act", disabled=data["pepel"] < 5, use_container_width=True):
+            data["pepel"] = 0; data["pepel_empower"] = True
+            log("Пепел: следующее огненное заклинание игнорирует 30% сопротивления")
+            persist_and_rerun()
+        if p2.button("🌑 Невидимость", key="ten_inv", disabled=data["ten"] < 5, use_container_width=True):
+            data["ten"] = 0; data["ten_invis"] = True
+            log("Тень: невидимость")
+            persist_and_rerun()
+        if st.button("🌑 +20 к сопротивлениям", key="ten_res", disabled=data["ten"] < 5, use_container_width=True):
+            data["ten"] = 0; data["ten_resist_boost"] = 2
+            log("Тень: +20 к сопротивлениям на 2 раунда")
+            persist_and_rerun()
+        if data.get("pepel_empower"): st.caption("🔥 Усиление огня готово")
+        if data.get("ten_invis"): st.caption("🌑 Невидимость активна")
+        if data.get("ten_resist_boost"): st.caption(f"🌑 Сопротивления усилены: {data['ten_resist_boost']} раунда")
+        if data.get("soul_flame_boost"): st.caption("Ритуал: Пламя души +40%")
+        for key, passive in data["passives"].items():
+            if passive.get("type") == "special":
+                if st.button(passive["name"], key=f"battle_passive_{key}", disabled=passive["used"], use_container_width=True):
+                    passive["used"] = True
+                    if key == "ritual_black_flame": data["soul_flame_boost"] = True
+                    if key == "cold_calculation": data["crit_boost_active"] = True
+                    log(f"Особое умение: {passive['name']}")
+                    persist_and_rerun()
+        p1, p2 = st.columns(2)
+        if p1.button("+1 Пепел", key="pep_plus", use_container_width=True):
+            data["pepel"] = min(5, data["pepel"] + 1); persist_and_rerun("Добавлен Пепел")
+        if p2.button("+1 Тень", key="ten_plus", use_container_width=True):
+            data["ten"] = min(5, data["ten"] + 1); persist_and_rerun("Добавлена Тень")
+    with st.expander("Отдых", expanded=False):
+        c1, c2 = st.columns(2)
+        if c1.button("Короткий отдых", key="battle_short_rest", use_container_width=True):
+            restored = restore_mana(data, data["mana_regen"] * 3)
+            log(f"Короткий отдых: +{restored} MP"); persist_and_rerun()
+        if c2.button("Долгий отдых", key="battle_long_rest", use_container_width=True):
+            data["hp_current"] = data["hp_max"]; data["mana_current"] = data["mana_max"]
+            data["pepel"] = data["ten"] = data["ten_resist_boost"] = 0
+            for flag in ("soul_flame_boost", "crit_boost_active", "pepel_empower", "ten_invis"): data[flag] = False
+            data["effects"] = []; data["dots"] = []; data["status_effects"] = []
+            for passive in data["passives"].values():
+                if passive.get("type") == "special": passive["used"] = False
+            for spell in data["spells"]: spell["cd_left"] = 0
+            if data["combat_active"]: refresh_turn_order(data)
+            log("Долгий отдых"); persist_and_rerun()
+
+
+def render_participant_editor(data, token):
+    target = participant(data, token)
+    hp_key, maximum_key = hp_fields(target)
+    with st.expander("Изменить характеристики участника", expanded=False):
+        with st.form(f"edit_participant_{token}"):
+            name = st.text_input("Имя", value=target["name"])
+            c1, c2 = st.columns(2)
+            hp = c1.number_input("HP", min_value=0, value=target[hp_key])
+            maximum = c2.number_input("Максимум HP", min_value=1, value=target[maximum_key], disabled=token == "player")
+            armor = st.number_input("Броня без временных эффектов", min_value=0, value=target.get("armor", 0))
+            attack = st.number_input("Урон атаки", min_value=0, value=target.get("attack_damage", target.get("phys_attack", 0)))
+            attack_type = st.selectbox("Тип атаки", DAMAGE_TYPES, index=DAMAGE_TYPES.index(target.get("attack_type", "Физический")))
+            resists = {}
+            cols = st.columns(2)
+            for i, element in enumerate(ELEMENTS):
+                resists[element] = cols[i % 2].number_input(element, min_value=0, value=target.get("resists", {}).get(element, 0))
+            if token == "player": st.caption("Максимум HP Калисты рассчитывается из уровня и характеристик.")
+            if st.form_submit_button("Сохранить участника"):
+                if not name.strip(): st.error("Укажи имя")
+                else:
+                    target["name"] = name.strip(); target[hp_key] = hp
+                    if token != "player": target[maximum_key] = maximum
+                    if token == "player":
+                        data["armor_adjustment"] += armor - data["armor"]
+                        data["attack_adjustment"] += attack - data["phys_attack"]
+                        for element in ELEMENTS:
+                            data["resist_adjustments"][element] += resists[element] - data["resists"].get(element, 0)
+                    else:
+                        target["armor"] = armor; target["attack_damage"] = attack
+                        target["attack_type"] = attack_type; target["resists"] = resists
+                    if data["combat_active"]: refresh_turn_order(data)
+                    log(f"Изменён участник: {name.strip()}")
+                    persist_and_rerun()
+    if token.startswith("enemy:"):
+        with st.expander("Удалить участника", expanded=False):
+            confirm = st.checkbox("Подтверждаю удаление", key=f"confirm_delete_{token}")
+            if st.button("Удалить врага", disabled=not confirm, key=f"delete_{token}"):
+                data["enemies"] = [enemy for enemy in data["enemies"] if f"enemy:{enemy['id']}" != token]
+                for message in exclude_from_queue_after_delete(data, token): log(message)
+                log(f"Удалён враг: {target['name']}")
+                persist_and_rerun()
+
+
+def exclude_from_queue_after_delete(data, token):
+    # Удаляем запись из очереди тем же способом, без требования существующей цели.
+    data.setdefault("turn_excluded", [])
+    current = get_current_actor(data)
+    index = data["current_turn"]
+    data["turn_order"] = [actor for actor in data["turn_order"] if actor_token(actor) != token]
+    data["initiative_overrides"].pop(token, None)
+    data["turn_excluded"] = [item for item in data["turn_excluded"] if item != token]
+    if not data["turn_order"]: data["current_turn"] = 0
+    elif current and actor_token(current) != token:
+        data["current_turn"] = next(i for i, actor in enumerate(data["turn_order"]) if actor_token(actor) == actor_token(current))
+    elif index >= len(data["turn_order"]):
+        return finish_round(data)
+    else: data["current_turn"] = index
+    return []
+
+
+def render_attack(data, token):
+    target = participant(data, token)
+    if token == "player":
+        return
+    with st.expander(f"Атака · {target['name']}", expanded=True):
+        victims = [candidate for candidate, other in participants(data) if candidate != token and other[hp_fields(other)[0]] > 0]
+        if not victims:
+            st.caption("Нет доступных целей")
+            return
+        default = "player" if token.startswith("enemy:") else next((candidate for candidate in victims if candidate.startswith("enemy:")), victims[0])
+        victim_token = remembered_select("Цель атаки", victims, f"attack_victim_{token}", default=default,
+                                        format_func=lambda value: participant_label(data, value))
+        victim = participant(data, victim_token)
+        amount = target.get("attack_damage", 0)
+        dtype = target.get("attack_type", "Физический")
+        result = damage_preview(victim, amount, dtype)
+        invisible = victim is data and data.get("ten_invis")
+        st.caption(f"{amount} · {dtype}")
+        st.info("Атака будет отменена невидимостью" if invisible else damage_message(victim["name"], result))
+        if st.button("Атаковать", key=f"attack_{token}", disabled=target[hp_fields(target)[0]] == 0,
+                     type="primary", use_container_width=True):
+            if invisible:
+                data["ten_invis"] = False
+                log(f"{target['name']}: промах — {victim['name']} невидима")
+            else:
+                result = apply_damage(victim, amount, dtype)
+                log(f"{target['name']} → " + damage_message(victim["name"], result))
+            persist_and_rerun("Атака: " + target["name"])
+
+
+def render_new_enemy(data):
+    with st.expander("Добавить врага / подкрепление", expanded=False):
+        with st.form("adden"):
+            c1, c2 = st.columns(2)
+            name = c1.text_input("Имя нового врага", value="Враг")
+            level = c2.number_input("Уровень", min_value=1, max_value=60, value=10)
+            size = st.selectbox("Размер", ["Мелкий", "Обычный", "Крупный", "Огромный"])
+            elite = st.checkbox("Элитный")
+            if st.form_submit_button("Добавить врага"):
+                if not name.strip(): st.error("Укажи имя")
+                else:
+                    eid = data["next_enemy_id"]
+                    data["enemies"].append({"id": eid, "name": name.strip(), "level": level, "size": size,
+                                            "is_elite": elite, "effects": [], **gen_enemy(level, size, elite)})
+                    data["next_enemy_id"] += 1
+                    if data["combat_active"]: refresh_turn_order(data)
+                    st.session_state["_next_battle_target"] = f"enemy:{eid}"
+                    log(f"Добавлен враг: {name.strip()}")
+                    persist_and_rerun()
+
+
+def render_queue(data, token):
+    target = participant(data, token)
+    current = get_current_actor(data)
+    if data["turn_order"]:
+        visible_order = list(enumerate(data["turn_order"]))
+        if len(visible_order) > 10:
+            pages = list(range((len(visible_order) + 9) // 10))
+            page_index = remembered_select("Страница очереди", pages, "queue_page", default=data["current_turn"] // 10,
+                                            format_func=lambda value: f"{value + 1} / {len(pages)}")
+            visible_order = visible_order[page_index * 10:(page_index + 1) * 10]
+        for i, actor in visible_order:
+            prefix = "▶" if i == data["current_turn"] else "✓" if i < data["current_turn"] else "·"
+            st.write(f"{prefix} {i + 1}. {actor['name']} · {actor.get('init', 0)}")
+    else:
+        st.caption("Очередь появится после начала боя")
+    st.caption("Перестановка действует в текущем круге. Следующий круг строится по инициативе.")
+    default_init = data.get("initiative_overrides", {}).get(token, target.get("initiative", 10))
+    initiative = st.number_input("Инициатива выбранного участника", min_value=0, value=default_init, key=f"queue_init_{token}")
+    if st.button("Применить инициативу", key="queue_apply_init"):
+        set_initiative(data, token, initiative)
+        log(f"Инициатива: {target['name']} → {initiative}")
+        persist_and_rerun()
+    order_tokens = [actor_token(actor) for actor in data["turn_order"]]
+    if token in order_tokens:
+        pos = order_tokens.index(token)
+        c1, c2 = st.columns(2)
+        if c1.button("↑ Раньше", disabled=pos == 0, key="queue_up", use_container_width=True):
+            move_in_queue(data, token, -1); log(f"{target['name']}: раньше в очереди"); persist_and_rerun()
+        if c2.button("↓ Позже", disabled=pos == len(order_tokens) - 1, key="queue_down", use_container_width=True):
+            move_in_queue(data, token, 1); log(f"{target['name']}: позже в очереди"); persist_and_rerun()
+        if st.button("Назначить его ход сейчас", disabled=current is not None and actor_token(current) == token, key="queue_jump", use_container_width=True):
+            data["current_turn"] = pos
+            log(f"Ведущий назначил ход: {target['name']}")
+            persist_and_rerun()
+        st.caption("Назначение хода вручную не вызывает тики эффектов.")
+    if token in data.get("turn_excluded", []):
+        if st.button("Вернуть в очередь", key="queue_return", use_container_width=True):
+            return_to_queue(data, token); log(f"{target['name']}: возвращён в очередь"); persist_and_rerun()
+    elif st.button("Исключить из очереди", key="queue_exclude", use_container_width=True):
+        for message in exclude_from_queue(data, token): log(message)
+        log(f"{target['name']}: исключён из очереди")
+        persist_and_rerun()
+    if token in data.get("initiative_overrides", {}):
+        if st.button("Вернуть обычную инициативу", key="queue_clear_override"):
+            set_initiative(data, token, target.get("initiative", 10))
+            data["initiative_overrides"].pop(token)
+            log(f"{target['name']}: обычная инициатива восстановлена"); persist_and_rerun()
+
+
+def render_battle(data):
+    render_battle_header(data)
+    section = st.session_state["battle_section"]
+    if section == "Журнал":
+        st.caption("История отмены хранится в текущей сессии; состояние игры сохраняется в файл.")
+        search = st.text_input("Найти в журнале", key="battle_log_search")
+        entries = [entry for entry in data["combat_log"] if search.casefold() in entry.casefold()]
+        for entry in entries[:20]: st.text(entry)
+        if not entries: st.caption("Записей нет")
+        st.download_button("Скачать журнал", "\n".join(reversed(data["combat_log"])), file_name="kalista_combat_log.txt", mime="text/plain")
+        return
+    tokens = [token for token, _ in participants(data)]
+    default = next((token for token in tokens if token.startswith("enemy:") and participant(data, token)["hp"] > 0), "player")
+    token = remembered_select("Цель / участник", tokens, "battle_target", default=default,
+                              format_func=lambda value: participant_label(data, value))
+    target = participant(data, token)
+    hp_key, maximum_key = hp_fields(target)
+    shield = sum(effect["value"] for effect in target.get("effects", []) if effect["kind"] == "shield")
+    st.caption(f"HP {target[hp_key]}/{target[maximum_key]} · Щит {shield} · Броня {effective_defense(target, 'Физический')} · Эффектов {len(target.get('effects', []))}")
+    if section == "Калиста":
+        render_selected_spell(data, target)
+    elif section == "Участники":
+        render_quick_action(data, token)
+        render_attack(data, token)
+        render_participant_editor(data, token)
+        render_new_enemy(data)
+    elif section == "Эффекты":
+        render_effect_editor(data, token)
+    elif section == "Очередь":
+        render_queue(data, token)
+    if data["combat_log"]:
+        st.caption("Последнее: " + data["combat_log"][0])
+
+
+# ===================== INIT =====================
+if "data" not in st.session_state:
+    st.session_state.data=load()
+    recalc(st.session_state.data)
+data=st.session_state.data
+if st.session_state.pop("_reset_resource_widgets", False):
+    st.session_state.pop("ah", None)
+    for key in list(st.session_state):
+        if (str(key).startswith("q") and str(key)[1:].isdigit()) or str(key).startswith("queue_init_"):
+            del st.session_state[key]
+recalc(data)
+if "_committed_data" not in st.session_state:
+    st.session_state["_committed_data"] = deepcopy(data)
+st.session_state.setdefault("_undo_history", [])
+if "_next_battle_target" in st.session_state:
+    st.session_state["battle_target"] = st.session_state.pop("_next_battle_target")
+
+# ===================== SIDEBAR =====================
+with st.sidebar:
+    st.markdown("<div class='main-title' style='font-size:1.35rem'>✧ Калист</div>", unsafe_allow_html=True)
+    st.caption(f"Ур.{data['level']} · {data['class']}")
+    st.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0), text=f"HP {data['hp_current']}/{data['hp_max']}")
+    st.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0), text=f"MP {data['mana_current']}/{data['mana_max']}")
+    if data.get("combat_active"):
+        st.markdown(f"**Раунд {data['round']}**")
+        actor=get_current_actor(data)
+        if actor: st.info(f"Ход: {actor['name']}")
+    st.divider()
+    page=st.radio("Меню",["Обзор","Бой","Экипировка","Характеристики","Инвентарь","Заклинания","Квесты","Кубики","Биография"],label_visibility="collapsed", key="page")
+    st.divider()
+    if st.button("💾 Сохранить",use_container_width=True):
+        if save(data): st.success("Сохранено")
+    st.download_button("📥 Экспорт сохранения", json.dumps(data, ensure_ascii=False, indent=2),
+                       file_name="kalista_save.json", mime="application/json", use_container_width=True)
+    imported = st.file_uploader("Импорт сохранения", type=["json"])
+    if imported is not None and st.button("Применить импорт"):
+        try:
+            restored = migrate(json.loads(imported.getvalue().decode("utf-8-sig")))
+            recalc(restored)
+            if save(restored):
+                st.session_state.data = restored
+                for key in list(st.session_state):
+                    if key != "data": del st.session_state[key]
+                persist_and_rerun()
+        except (ValueError, TypeError, KeyError) as exc:
+            st.error(f"Импорт отменён: {exc}")
+    reset_confirm = st.checkbox("Подтверждаю сброс к исходной Калисте")
+    if st.button("🔄 Сброс",use_container_width=True, disabled=not reset_confirm):
+        restored = migrate(deepcopy(DEFAULT)); recalc(restored)
+        if save(restored):
+            st.session_state.data = restored
+            for key in list(st.session_state):
+                if key != "data": del st.session_state[key]
+            persist_and_rerun()
+
+# ===================== ОБЗОР =====================
+if page=="Обзор":
+    st.markdown(f"<div class='main-title'>{data['name']}</div>", unsafe_allow_html=True)
+    st.markdown(f"<div class='subtitle'>{data['race']} · {data['class']} · Ур.{data['level']}</div>", unsafe_allow_html=True)
+    data["portrait_url"] = st.text_input("URL портрета (картинка)", value=data.get("portrait_url",""), key="portrait")
+    if data.get("portrait_url"):
+        try:
+            st.image(data["portrait_url"], width=200)
+        except Exception:
+            st.caption("Не удалось загрузить изображение")
+    c1,c2=st.columns(2)
+    c1.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0),text=f"HP {data['hp_current']}/{data['hp_max']}")
+    c2.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0),text=f"MP {data['mana_current']}/{data['mana_max']}")
+    m1,m2,m3,m4=st.columns(4)
+    m1.metric("Сила закл.",f"+{data['spell_power']*100:.0f}%")
+    m2.metric("Броня",data["armor"])
+    m3.metric("Иниц.",data["initiative"])
+    m4.metric("Очки",data["free_points"])
+    st.markdown("<div class='section-h'>Сопротивления</div>", unsafe_allow_html=True)
+    rc=st.columns(6)
+    for i,e in enumerate(ELEMENTS):
+        rc[i].metric(e, data["resists"].get(e,0))
+    st.markdown("<div class='section-h'>Характеристики</div>", unsafe_allow_html=True)
+    cols=st.columns(4)
+    for i,n in enumerate(["Сила","Выносливость","Ловкость","Мудрость","Интеллект","Харизма","Дух"]):
+        cols[i%4].metric(n, total_stat(data,n))
+    st.markdown("<div class='section-h'>Опыт</div>", unsafe_allow_html=True)
+    x1,x2,x3=st.columns([2,1,1])
+    ax=x1.number_input("XP",0,value=100,step=50)
+    if x2.button("➕ XP"): data["xp"]+=ax; data["xp_to_next"]=max(0,data["xp_to_next"]-ax); persist_and_rerun()
+    if x3.button("⬆ Ур.+1"):
+        data["level"]+=1; data["free_points"]+=4; data["xp_to_next"]=data["level"]*1000; recalc(data); persist_and_rerun()
+
+# ===================== БОЙ =====================
+elif page=="Бой":
+    render_battle(data)
+
+# ===================== ЭКИПИРОВКА =====================
+elif page=="Экипировка":
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Экипировка</div>", unsafe_allow_html=True)
+    for slot,it in data["equipment"].items():
+        with st.expander(f"{'🔹' if it.get('name') else '▫️'} {slot}: {it.get('name') or '—'}"):
+            it["name"]=st.text_input("Имя",it.get("name",""),key=f"n{slot}")
+            c=st.columns(4)
+            it["armor"]=c[0].number_input("Броня",0,value=int(it.get("armor",0)),key=f"a{slot}")
+            it["attack"]=c[1].number_input("Атака",0,value=int(it.get("attack",0)),key=f"t{slot}")
+            it["int"]=c[2].number_input("Инт",0,value=int(it.get("int",0)),key=f"i{slot}")
+            it["wis"]=c[3].number_input("Мудр",0,value=int(it.get("wis",0)),key=f"w{slot}")
+            c2=st.columns(4)
+            it["spi"]=c2[0].number_input("Дух",0,value=int(it.get("spi",0)),key=f"s{slot}")
+            it["fire"]=c2[1].number_input("Огонь",0,value=int(it.get("fire",0)),key=f"f{slot}")
+            it["dark"]=c2[2].number_input("Тьма",0,value=int(it.get("dark",0)),key=f"d{slot}")
+            it["earth"]=c2[3].number_input("Земля",0,value=int(it.get("earth",0)),key=f"e{slot}")
+            c3=st.columns(3)
+            it["water"]=c3[0].number_input("Вода",0,value=int(it.get("water",0)),key=f"wa{slot}")
+            it["air"]=c3[1].number_input("Воздух",0,value=int(it.get("air",0)),key=f"ai{slot}")
+            it["light"]=c3[2].number_input("Свет",0,value=int(it.get("light",0)),key=f"l{slot}")
+    if st.button("🔄 Пересчитать",type="primary"):
+        recalc_equip(data); recalc(data); st.success(f"Броня {data['armor']}"); persist_and_rerun()
+
+# ===================== ХАРАКТЕРИСТИКИ =====================
+elif page=="Характеристики":
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Характеристики</div>", unsafe_allow_html=True)
+    st.info(f"Свободные очки: **{data['free_points']}** · Уровень **{data['level']}**")
+
+    with st.expander("Характеристики", expanded=True):
+        for n in ["Сила","Выносливость","Ловкость","Мудрость","Интеллект","Харизма","Дух"]:
+            cols = st.columns([2,1,1,1,1])
+            cols[0].write(f"**{n}**")
+            cols[1].write(f"База {data['base_stats'][n]}")
+            cols[2].write(f"+{data['equip_bonuses'][n]}")
+            cols[3].write(f"**{total_stat(data,n)}**")
+            if cols[4].button("＋", key=f"u{n}", disabled=data["free_points"]<=0):
+                data["base_stats"][n] += 1
+                data["free_points"] -= 1
+                recalc(data)
+                persist_and_rerun()
+        st.markdown("**Производные**")
+        d1,d2,d3 = st.columns(3)
+        d1.metric("Сила закл.", f"+{data['spell_power']*100:.0f}%")
+        d1.metric("Реген маны", data["mana_regen"])
+        d2.metric("Сопр. контролю", f"{data.get('control_resist',0)*100:.1f}%")
+        d2.metric("Инициатива", data["initiative"])
+        d3.metric("Броня", data["armor"])
+        d3.metric("Крит", f"{data.get('crit_chance',0.065)*100:.1f}%")
+
+    with st.expander("Сопротивления стихиям"):
+        rc = st.columns(6)
+        for i, e in enumerate(ELEMENTS):
+            rc[i].metric(e, data["resists"].get(e, 0))
+
+    with st.expander("Пассивки (расовые и классовые)"):
+        for k, p in data["passives"].items():
+            if p.get("type") in ("racial", "class"):
+                st.markdown(f"**{p['name']}** — {p['desc']}")
+                if k == "mana_reserve":
+                    st.caption("Пока справочное правило: бонус к регенерации назначает ведущий. Автоматический триггер ещё не подключён.")
+                if k == "shadow_child":
+                    st.caption("Текущий расчёт: +20 пунктов сопротивления с пределом 95; это сохранённая формула программы.")
+
+    with st.expander("Особые умения"):
+        for k, p in data["passives"].items():
+            if p.get("type") != "special":
+                continue
+            c1, c2 = st.columns([3.5, 1])
+            status = "✅ использовано" if p["used"] else "🟢 доступно"
+            c1.markdown(f"**{p['name']}** — {status}<br>{p['desc']}", unsafe_allow_html=True)
+            if not p["used"]:
+                if c2.button("Использовать", key=f"pas_{k}"):
+                    p["used"] = True
+                    if k == "ritual_black_flame":
+                        data["soul_flame_boost"] = True
+                        log("Ритуал: Пламя души усилено")
+                    elif k == "cold_calculation":
+                        data["crit_boost_active"] = True
+                        log("Холодный расчёт: +10% крита")
+                    else:
+                        log(f"Использовано: {p['name']}")
+                    persist_and_rerun()
+            else:
+                c2.write("—")
+
+elif page=="Инвентарь":
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Инвентарь</div>", unsafe_allow_html=True)
+    g,s,c=st.columns(3)
+    data["gold"]=g.number_input("Золото",0,value=data["gold"])
+    data["silver"]=s.number_input("Серебро",0,value=data["silver"])
+    data["copper"]=c.number_input("Медь",0,value=data["copper"])
+    for i,it in enumerate(data["inventory"]):
+        cols=st.columns([3,1,1,1])
+        cols[0].write(f"**{it['name']}** · {it['type']}")
+        it["qty"]=cols[1].number_input("Кол",0,value=it["qty"],key=f"q{i}",label_visibility="collapsed")
+        use = it.get("use")
+        if use:
+            cols[0].caption(f"Применение: { {'heal': 'лечение', 'mana': 'мана', 'shield': 'щит'}[use['kind']]} · {use['value']}")
+            if cols[2].button("Применить", key=f"use_item_{i}", disabled=it["qty"] <= 0 or use["value"] <= 0):
+                message = use_item(data, it)
+                log(message)
+                persist_and_rerun()
+        with st.expander(f"Действие предмета · {it['name']} · #{i + 1}"):
+            with st.form(f"item_use_{i}"):
+                options = ["none", "heal", "mana", "shield"]
+                current = use["kind"] if use else "none"
+                kind = st.selectbox("Действие", options, index=options.index(current),
+                                    format_func=lambda v: {"none": "Справочный предмет", "heal": "Лечение", "mana": "Восстановление маны", "shield": "Щит"}[v])
+                amount = st.number_input("Величина", min_value=0, value=use["value"] if use else 0)
+                duration = st.number_input("Полных раундов (0 — бессрочно)", min_value=0, value=use.get("duration", 0) if use else 0)
+                if st.form_submit_button("Сохранить действие"):
+                    it["use"] = None if kind == "none" else {"kind": kind, "value": amount, "duration": duration}
+                    persist_and_rerun()
+        if cols[3].button("🗑",key=f"x{i}"): data["inventory"].pop(i); persist_and_rerun()
+    with st.form("ai"):
+        st.markdown("**Добавить предмет**")
+        nn = st.text_input("Название")
+        nt = st.selectbox("Тип", ["Расходник", "Реагент", "Свиток", "Оружие", "Броня", "Реликвия", "Инструмент", "Книга", "Валюта", "Прочее"])
+        nq = st.number_input("Количество", min_value=1, value=1)
+        nd = st.text_input("Описание")
+        if st.form_submit_button("Добавить") and nn.strip():
+            data["inventory"].append({"name": nn.strip(), "type": nt, "qty": int(nq), "desc": nd, "use": None})
+            persist_and_rerun()
+
+
+elif page=="Заклинания":
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Заклинания</div>", unsafe_allow_html=True)
+    st.caption("Кулдауны в раундах. 0 = без кулдауна. Каст — на странице «Бой».")
+
+    for i, sp in enumerate(list(data["spells"])):
+        with st.expander(f"{sp.get('name','?')} (КД {sp.get('cd_max',0)})"):
+            sp["name"] = st.text_input("Название", sp.get("name",""), key=f"sn{sp['id']}")
+            c1, c2, c3, c4 = st.columns(4)
+            sp["base"] = c1.number_input("Базовый урон", min_value=0, value=int(sp.get("base",0) or 0), key=f"sb{sp['id']}")
+            sp["mana"] = c2.number_input("Мана", min_value=0, value=int(sp.get("mana",0) or 0), key=f"sm{sp['id']}")
+            sp["cd_max"] = c3.number_input("Кулдаун", min_value=0, value=int(sp.get("cd_max",0) or 0), key=f"sc{sp['id']}")
+            schools = ["Огонь", "Тьма", "Огонь+Тьма"]
+            cur = sp.get("school", "Огонь")
+            sp["school"] = c4.selectbox("Школа", schools, index=schools.index(cur) if cur in schools else 0, key=f"ss{sp['id']}")
+            sp["desc"] = st.text_input("Описание", sp.get("desc",""), key=f"sd{sp['id']}")
+            actions = ["damage", "heal", "shield", "note"]
+            sp["action"] = st.selectbox("Действие", actions, index=actions.index(spell_action(sp)),
+                                        format_func=lambda v: {"damage": "Урон", "heal": "Лечение", "shield": "Щит", "note": "Статус / заметка"}[v], key=f"sa{sp['id']}")
+            if sp["action"] in ("heal", "shield"):
+                sp["effect_value"] = st.number_input("Лечение / сила щита (без множителей)", min_value=0,
+                                                      value=sp.get("effect_value", 0), key=f"sev{sp['id']}")
+            if sp["action"] in ("shield", "note"):
+                sp["effect_duration"] = st.number_input("Полных раундов (0 — бессрочно)", min_value=0,
+                                                         value=sp.get("effect_duration", 0), key=f"sed{sp['id']}")
+            if sp["action"] == "damage":
+                with st.form(f"dot_settings_{sp['id']}"):
+                    existing = sp.get("dot") or {}
+                    enabled = st.checkbox("Периодический урон", value=bool(existing))
+                    dot_name = st.text_input("Название эффекта", value=existing.get("name", "Горение"))
+                    dot_amount = st.number_input("Урон за срабатывание", min_value=0, value=existing.get("damage", 0))
+                    dot_duration = st.number_input("Срабатываний", min_value=1, value=max(1, existing.get("duration", 3)))
+                    dot_element = st.selectbox("Тип урона эффекта", DAMAGE_TYPES,
+                                               index=DAMAGE_TYPES.index(existing.get("element", "Огонь")))
+                    if st.form_submit_button("Сохранить периодический эффект"):
+                        if enabled and not dot_name.strip():
+                            st.error("Укажи название эффекта")
+                        else:
+                            sp["dot"] = {"name": dot_name.strip(), "damage": dot_amount,
+                                         "duration": dot_duration, "element": dot_element} if enabled else None
+                            persist_and_rerun()
+
+            gives_opts = [None, "pepel", "ten", "both"]
+            cur_g = sp.get("gives")
+            gi = gives_opts.index(cur_g) if cur_g in gives_opts else 0
+            sp["gives"] = st.selectbox("Даёт ресурс", gives_opts, index=gi,
+                format_func=lambda x: {None:"Ничего","pepel":"Пепел","ten":"Тень","both":"Оба"}[x], key=f"sg{sp['id']}")
+            if st.button("Удалить заклинание", key=f"sdel{sp['id']}"):
+                data["spells"].pop(i)
+                persist_and_rerun()
+
+    with st.form("asp"):
+        st.markdown("**Новое заклинание**")
+        sn = st.text_input("Название")
+        c1, c2, c3 = st.columns(3)
+        sb = c1.number_input("Урон", min_value=0, value=50)
+        sm = c2.number_input("Мана", min_value=0, value=30)
+        sc = c3.number_input("Кулдаун", min_value=0, value=0)
+        ss = st.selectbox("Школа", ["Огонь", "Тьма", "Огонь+Тьма"])
+        sd = st.text_input("Описание")
+        sg = st.selectbox("Даёт", [None, "pepel", "ten", "both"],
+            format_func=lambda x: {None:"Ничего","pepel":"Пепел","ten":"Тень","both":"Оба"}[x])
+        if st.form_submit_button("Добавить") and sn.strip():
+            nid = max((s.get("id",0) for s in data["spells"]), default=0) + 1
+            data["spells"].append({
+                "id": nid, "name": sn.strip(), "base": sb, "mana": sm,
+                "school": ss, "desc": sd, "gives": sg,
+                "cd_max": sc, "cd_left": 0, "dot": None, "range": "Средняя"
+            })
+            persist_and_rerun()
+
+
+# ===================== КВЕСТЫ =====================
+elif page=="Квесты":
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Квесты и заметки</div>", unsafe_allow_html=True)
+
+    if not data.get("quests"):
+        st.caption("Квестов пока нет")
+
+    for i, q in enumerate(list(data.get("quests", []))):
+        title = f"{q.get('name','Без имени')} — {q.get('status','?')}"
+        with st.expander(title):
+            q["name"] = st.text_input("Название", q.get("name",""), key=f"qn{i}")
+            statuses = ["Активен", "В процессе", "Ожидание", "Выполнен", "Провален"]
+            cur_st = q.get("status", "Активен")
+            q["status"] = st.selectbox("Статус", statuses,
+                index=statuses.index(cur_st) if cur_st in statuses else 0, key=f"qs{i}")
+            q["desc"] = st.text_area("Описание", q.get("desc",""), key=f"qdesc{i}")
+            if st.button("Удалить квест", key=f"qdel{i}"):
+                data["quests"].pop(i)
+                persist_and_rerun()
+
+    with st.form("aq"):
+        st.markdown("**Новый квест**")
+        qn = st.text_input("Название")
+        qs = st.selectbox("Статус", ["Активен", "В процессе", "Ожидание"])
+        qd = st.text_area("Описание")
+        if st.form_submit_button("Добавить") and qn.strip():
+            nid = max((q.get("id",0) for q in data.get("quests",[])), default=0) + 1
+            data.setdefault("quests", []).append({"id": nid, "name": qn.strip(), "status": qs, "desc": qd})
+            persist_and_rerun()
+
+    st.markdown("---")
+    st.markdown("**Личные заметки**")
+    data["notes"] = st.text_area("Заметки", value=data.get("notes",""), height=150, key="notes_area")
+
+
+# ===================== КУБИКИ =====================
+elif page=="Кубики":
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Кубики</div>", unsafe_allow_html=True)
+    cols=st.columns(7)
+    for i,s in enumerate([4,6,8,10,12,20,100]):
+        with cols[i]:
+            if st.button(f"d{s}",key=f"d{s}",use_container_width=True):
+                r=random.randint(1,s); st.session_state[f"r{s}"]=r; log(f"d{s}:{r}")
+            if f"r{s}" in st.session_state:
+                st.markdown(f"<h2 style='text-align:center;color:#E8DAEF'>{st.session_state[f'r{s}']}</h2>",unsafe_allow_html=True)
+
+# ===================== БИО =====================
+elif page=="Биография":
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Биография</div>", unsafe_allow_html=True)
+    st.markdown("""
+### Внешность
+Высокая даже для дроу (около 178 см), стройная, с грациозной, почти хищной осанкой.
+Кожа цвета глубокой ночи с лёгким пепельным оттенком. Волосы — длинные, **чёрные как ночь**, обычно собраны в небрежный высокий хвост или спрятаны под капюшоном.
+Глаза ярко-фиолетовые, почти светящиеся в темноте. На левой щеке тонкий шрам от старого ритуального клинка.
+Одевается исключительно в чёрное и тёмно-фиолетовое. Движения точные, экономные, без лишних жестов.
+
+### Характер
+Холодная, сдержанная, крайне наблюдательная. Редко повышает голос — предпочитает, чтобы за неё говорили последствия.
+Обладает сухим, иногда язвительным чувством юмора. К тем, кого считает «своими», проявляет неожиданную (хоть и сдержанную) заботу.
+Глубоко амбициозна, но не ради власти над другими, а ради понимания и контроля над силами, которые большинство считают запретными.
+Ненавидит слабость в себе и презирает тех, кто сдаётся. При этом сама боится потерять контроль над собственной магией.
+
+### Предыстория
+Калист родилась в **Доме Клиф** — большом и гордом матриархальном доме дроу, известном своими экспериментами на стыке огня и тьмы.
+Её мать, матриарх **Ильраэль Клиф**, была одержима идеей создать «чистое пламя бездны» — огонь, питаемый самой пустотой.
+В возрасте шестнадцати лет Калист стала свидетельницей падения своего дома: во время особо опасного ритуала что-то пошло не так.
+Чёрное пламя вырвалось из-под контроля и уничтожило почти весь Дом Клиф за одну ночь.
+Выжила только она — потому что в последний момент мать затолкала её в защитный круг и сама приняла основной удар.
+
+С тех пор Калист странствует. Сначала по Подземью, потом — на поверхность.
+Она продолжает исследования матери, но уже более осторожно и методично.
+Носит с собой единственную реликвию дома — **Фамильный Амулет** — и клянётся, что либо доведёт работу до конца, либо погибнет, пытаясь.
+На поверхности её часто принимают за обычную тёмную эльфийку-отшельницу. Мало кто догадывается, насколько глубоко она погружена в запретные знания.
+
+### Цели и мотивация
+- Завершить работу матери и создать стабильное «Пламя Души»
+- Найти или воссоздать знания, утерянные вместе с Домом Клиф
+- Доказать себе, что падение дома было не приговором, а ценой за нечто большее
+- Достичь равновесия огня и тьмы внутри себя
+
+### Страхи и слабости
+- Потеря контроля (повторить судьбу матери)
+- Одиночество
+- Светлые маги и «чистые» жрецы
+- Привязанность
+
+### Важные связи
+- **Ильраэль Клиф** (мать, погибла) — источник и боли, и силы
+- **Вэрин Т’лаас** — бывший соратник, расстались на плохой ноте
+- **«Серый»** — контрабандист с поверхности, знает часть правды
+""")
+
+
+
+commit_current()
