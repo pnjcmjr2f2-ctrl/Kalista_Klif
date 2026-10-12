@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v14 · компактный боевой стол
+Калиста Клиф — v15 · компактный боевой стол
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -18,6 +18,7 @@ from pathlib import Path
 from copy import deepcopy
 
 SAVE_FILE = Path(__file__).parent / "kalista_save.json"
+PORTRAIT_FILE = Path(__file__).parent / "assets" / "kalista-portrait.png"
 ELEMENTS = ["Огонь", "Земля", "Вода", "Воздух", "Тьма", "Свет"]
 
 st.set_page_config(page_title="✧ Калиста Клиф ✧", page_icon="🔥", layout="wide", initial_sidebar_state="expanded")
@@ -74,6 +75,11 @@ div[data-testid="stMetricValue"]{font-size:1.25rem}
 .st-key-gm_filter [data-testid="stHorizontalBlock"],.st-key-gm_scene_actions [data-testid="stHorizontalBlock"],.st-key-gm_roster [data-testid="stHorizontalBlock"]{flex-wrap:nowrap!important;gap:.6rem}
 .st-key-gm_filter [data-testid="stColumn"],.st-key-gm_scene_actions [data-testid="stColumn"],.st-key-gm_roster [data-testid="stColumn"]{min-width:0!important}
 @media(max-width:640px){.st-key-gm_scene_actions [data-testid="stColumn"]{flex:1 1 0!important}.st-key-gm_roster button{font-size:.78rem}}
+
+.st-key-overview_hero [data-testid="stHorizontalBlock"]{flex-wrap:nowrap!important;gap:.75rem}
+.st-key-overview_hero [data-testid="stColumn"]{min-width:0!important}
+.st-key-overview_hero [data-testid="stImage"] img{border-radius:14px;border:1px solid #624173;max-width:100%;height:auto}
+@media(max-width:640px){.st-key-overview_hero [data-testid="stMetricValue"]{font-size:1.1rem}.st-key-overview_hero [data-testid="stVerticalBlock"]{gap:.5rem}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -2149,20 +2155,29 @@ with st.sidebar:
 if page=="Обзор":
     st.markdown(f"<div class='main-title'>{data['name']}</div>", unsafe_allow_html=True)
     st.markdown(f"<div class='subtitle'>{data['race']} · {data['class']} · Ур.{data['level']}</div>", unsafe_allow_html=True)
-    data["portrait_url"] = st.text_input("URL портрета (картинка)", value=data.get("portrait_url",""), key="portrait")
-    if data.get("portrait_url"):
-        try:
-            st.image(data["portrait_url"], width=200)
-        except Exception:
-            st.caption("Не удалось загрузить изображение")
-    c1,c2=st.columns(2)
-    c1.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0),text=f"HP {data['hp_current']}/{data['hp_max']}")
-    c2.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0),text=f"MP {data['mana_current']}/{data['mana_max']}")
-    m1,m2,m3,m4=st.columns(4)
-    m1.metric("Сила закл.",f"+{data['spell_power']*100:.0f}%")
-    m2.metric("Броня",data["armor"])
-    m3.metric("Иниц.",data["initiative"])
-    m4.metric("Очки",data["free_points"])
+    with st.expander("Настройки портрета", expanded=False):
+        data["portrait_url"] = st.text_input("URL своего портрета (пусто — портрет Калисты)", value=data.get("portrait_url", ""), key="portrait")
+    with st.container(key="overview_hero"):
+        portrait_column, info_column = st.columns([1, 2])
+        with portrait_column:
+            source = data.get("portrait_url") or (str(PORTRAIT_FILE) if PORTRAIT_FILE.is_file() else None)
+            if source:
+                try:
+                    st.image(source, width=220)
+                except Exception:
+                    st.caption("Не удалось загрузить выбранный портрет")
+                    if PORTRAIT_FILE.is_file(): st.image(str(PORTRAIT_FILE), width=220)
+            else:
+                st.caption("Портрет хранится в assets/kalista-portrait.png рядом с приложением.")
+        with info_column:
+            st.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0),text=f"HP {data['hp_current']}/{data['hp_max']}")
+            st.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0),text=f"MP {data['mana_current']}/{data['mana_max']}")
+            m1,m2=st.columns(2)
+            m1.metric("Сила закл.",f"+{data['spell_power']*100:.0f}%")
+            m2.metric("Броня",data["armor"])
+            m3,m4=st.columns(2)
+            m3.metric("Иниц.",data["initiative"])
+            m4.metric("Очки",data["free_points"])
     st.markdown("<div class='section-h'>Сопротивления</div>", unsafe_allow_html=True)
     rc=st.columns(6)
     for i,e in enumerate(ELEMENTS):
