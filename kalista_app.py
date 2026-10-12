@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калист Клиф — v8 · компактный боевой стол
+Калист Клиф — v9 · компактный боевой стол
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -119,12 +119,14 @@ DEFAULT = {
         "double_flame": {"name":"Двойное пламя","type":"class","used":False,"desc":"+5% урона, если предыдущее заклинание было другой школы (Огонь↔Тьма). Работает автоматически."},
         "ash_lady": {"name":"Повелительница пепла","type":"class","used":False,"desc":"Огненные заклинания дают Пепел. При 5 — активация: след. огненное игнор 30% сопр. огню."},
         "shadow_child": {"name":"Дитя тени","type":"class","used":False,"desc":"Тёмные заклинания дают Тень. При 5 — активация: невидимость 1 ход ИЛИ +20 к сопротивлениям (предел 95) на 2 раунда."},
-        "mana_reserve": {"name":"Магический резерв","type":"class","used":False,"desc":"Когда мана <20%, реген маны +50% на 3 тика. Пока учитывается ведущим вручную."},
+        "mana_reserve": {"name":"Магический резерв","type":"class","used":False,"desc":"При мане <20% перед восстановлением: +50% регенерации на 3 конца раунда. Повтор — после достижения 20% и нового падения ниже порога."},
         # Особые (активируемые, раз в день/отдых)
         "ritual_black_flame": {"name":"Ритуал Чёрного Пламени","type":"special","used":False,"desc":"Раз в день: следующее Пламя души +40% урона без долгого каста."},
         "cold_calculation": {"name":"Холодный расчёт","type":"special","used":False,"desc":"В начале боя (1 ход): +10% шанса крита до конца боя."},
         "memory_of_house": {"name":"Память Дома Клиф","type":"special","used":False,"desc":"Раз в долгий отдых: преимущество на проверку знаний о запретной магии."},
     },
+    "mana_reserve_ticks": 0,
+    "mana_reserve_armed": True,
     "soul_flame_boost": False,
     "crit_boost_active": False,
     "pepel_empower": False,   # следующее огненное игнор 30% fire resist
@@ -257,9 +259,11 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
+    if saved.get("schema_version", 5) < 9:
+        data["passives"]["mana_reserve"]["desc"] = DEFAULT["passives"]["mana_reserve"]["desc"]
     for enemy in data["enemies"]:
         enemy.setdefault("resists", {el: enemy.get("resist_" + code, 0)
                                     for el, code in zip(ELEMENTS, ["fire", "earth", "water", "air", "dark", "light"])})
@@ -381,7 +385,9 @@ def migrate(saved):
         raise ValueError("Неверный список исключений из очереди")
     data["initiative_overrides"] = {token: value for token, value in data["initiative_overrides"].items() if token in known_tokens}
     data["turn_excluded"] = list(dict.fromkeys(token for token in data["turn_excluded"] if token in known_tokens))
-    data["schema_version"] = 8
+    if not 0 <= data["mana_reserve_ticks"] <= 3:
+        raise ValueError("Остаток тиков резерва должен быть от 0 до 3")
+    data["schema_version"] = 9
     return data
 
 
@@ -593,7 +599,34 @@ def restore_mana(target, amount):
         raise ValueError("У этой цели нет отдельного ресурса маны")
     restored = min(amount, max(0, target["mana_max"] - target["mana_current"]))
     target["mana_current"] += restored
+    observe_mana_reserve(target)
     return restored
+
+
+def observe_mana_reserve(data):
+    """Достижение порога разрешает следующую активацию после падения маны."""
+    if data.get("mana_max", 0) > 0 and data["mana_current"] * 5 >= data["mana_max"]:
+        data["mana_reserve_armed"] = True
+
+
+def tick_mana_regeneration(data):
+    """Один тик в конце полного раунда; порог проверяется до восстановления."""
+    observe_mana_reserve(data)
+    ticks = data.get("mana_reserve_ticks", 0)
+    messages = []
+    if (ticks == 0 and data.get("mana_reserve_armed", True)
+            and data["mana_max"] > 0 and data["mana_current"] * 5 < data["mana_max"]):
+        ticks = 3
+        data["mana_reserve_armed"] = False
+        messages.append("Магический резерв активирован: 3 усиленных тика")
+    amount = round(data["mana_regen"] * 1.5) if ticks else data["mana_regen"]
+    restored = restore_mana(data, amount)
+    data["mana_reserve_ticks"] = max(0, ticks - 1)
+    messages.append(f"Регенерация маны: +{restored} MP" +
+                    (f" · резерв: осталось {data['mana_reserve_ticks']} тика" if ticks else ""))
+    if ticks == 1:
+        messages.append("Магический резерв завершён")
+    return messages
 
 
 def damage_message(name, result):
@@ -647,7 +680,7 @@ def actor_target(data, actor):
 
 def finish_round(data):
     completed = data["round"]
-    messages = []
+    messages = tick_mana_regeneration(data)
     for _, target in participants(data):
         messages.extend(tick_round_effects(target, completed))
     for spell in data["spells"]:
@@ -742,6 +775,7 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
     if target is not None and action == "damage" and raw > 0:
         damage_preview(target, raw if final_damage is None else final_damage, dtype,
                        final=final_damage is not None, defense_factor=0.7 if empowered else 1.0)
+    observe_mana_reserve(data)
     data["mana_current"] -= spell["mana"]
     data["last_school"] = spell["school"]
     spell["cd_left"] = spell.get("cd_max", 0)
@@ -1059,6 +1093,7 @@ def add_history(history, before, after, label, limit=20):
 def commit_current(label=None):
     data = st.session_state.data
     recalc(data)
+    observe_mana_reserve(data)
     previous = st.session_state.get("_committed_data", deepcopy(data))
     if not save(data):
         return False
@@ -1238,6 +1273,7 @@ def render_selected_spell(data, target):
             data["ten"] = 0; data["ten_resist_boost"] = 2
             log("Тень: +20 к сопротивлениям на 2 раунда")
             persist_and_rerun()
+        st.caption(f"Регенерация: {data['mana_regen']} MP в конце раунда · резерв: {data.get('mana_reserve_ticks', 0)} усиленных тика осталось")
         if data.get("pepel_empower"): st.caption("🔥 Усиление огня готово")
         if data.get("ten_invis"): st.caption("🌑 Невидимость активна")
         if data.get("ten_resist_boost"): st.caption(f"🌑 Сопротивления усилены: {data['ten_resist_boost']} раунда")
@@ -1262,6 +1298,7 @@ def render_selected_spell(data, target):
             log(f"Короткий отдых: +{restored} MP"); persist_and_rerun()
         if c2.button("Долгий отдых", key="battle_long_rest", use_container_width=True):
             data["hp_current"] = data["hp_max"]; data["mana_current"] = data["mana_max"]
+            data["mana_reserve_ticks"] = 0; data["mana_reserve_armed"] = True
             data["pepel"] = data["ten"] = data["ten_resist_boost"] = 0
             for flag in ("soul_flame_boost", "crit_boost_active", "pepel_empower", "ten_invis"): data[flag] = False
             data["effects"] = []; data["dots"] = []; data["status_effects"] = []
@@ -1617,7 +1654,7 @@ elif page=="Характеристики":
             if p.get("type") in ("racial", "class"):
                 st.markdown(f"**{p['name']}** — {p['desc']}")
                 if k == "mana_reserve":
-                    st.caption("Пока справочное правило: бонус к регенерации назначает ведущий. Автоматический триггер ещё не подключён.")
+                    st.caption("Мана восстанавливается в конце полного раунда. Резерв проверяется до восстановления и усиливает три тика, даже после выхода выше 20%.")
                 if k == "shadow_child":
                     st.caption("Текущий расчёт: +20 пунктов сопротивления с пределом 95; это сохранённая формула программы.")
 
