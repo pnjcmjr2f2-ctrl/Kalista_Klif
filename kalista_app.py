@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v15 · компактный боевой стол
+Калиста Клиф — v16 · боевой стол и отряд
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -80,6 +80,57 @@ div[data-testid="stMetricValue"]{font-size:1.25rem}
 .st-key-overview_hero [data-testid="stColumn"]{min-width:0!important}
 .st-key-overview_hero [data-testid="stImage"] img{border-radius:14px;border:1px solid #624173;max-width:100%;height:auto}
 @media(max-width:640px){.st-key-overview_hero [data-testid="stMetricValue"]{font-size:1.1rem}.st-key-overview_hero [data-testid="stVerticalBlock"]{gap:.5rem}}
+
+/* Общая палитра и компактные панели. */
+:root{--ink:#efe8f4;--muted:#afa0bb;--line:#44364e;--accent:#c69ddd}
+[data-testid="stAppViewContainer"]{background:radial-gradient(ellipse at 80% 0%,#302139 0%,#17131d 60%);color:var(--ink)}
+[data-testid="stHeader"]{background:#17131de8}
+[data-testid="stSidebar"]{background:#201925;border-right:1px solid var(--line)}
+[data-testid="stMainBlockContainer"]{max-width:1120px;padding-top:3.5rem;padding-bottom:3rem}
+.main-title{font-family:Georgia,serif;text-align:left;font-size:2.1rem;letter-spacing:.01em;text-shadow:none;color:#f0e5f5;margin-bottom:.25rem}
+.subtitle{text-align:left;color:var(--muted);font-size:.9rem;margin-bottom:1rem}
+.section-h{font-family:inherit;font-size:.85rem;font-weight:600;letter-spacing:.04em;color:#cbb6d7;border-bottom:1px solid var(--line);padding-bottom:.6rem;margin:1.4rem 0 .75rem}
+[data-testid="stSidebar"] .main-title{text-align:left}
+[data-testid="stSidebar"] [role="radiogroup"]{gap:.15rem}
+[data-testid="stSidebar"] [role="radiogroup"] label{padding:.3rem .6rem;border-radius:8px}
+[data-testid="stSidebar"] [role="radiogroup"] label:has(input:checked){background:#493354;color:#efdff7}
+[data-testid="stMetric"]{border:1px solid var(--line);border-radius:12px;background:#241c2c;padding:.65rem .8rem}
+[data-testid="stMetricLabel"]{color:var(--muted);font-size:.8rem}
+[data-testid="stMetricValue"]{color:var(--ink);font-size:1.35rem}
+[data-testid="stExpander"]{background:#211a28;border:1px solid var(--line);border-radius:12px}
+[data-testid="stForm"]{border-color:var(--line);background:#211a28;border-radius:12px}
+[data-testid="stButton"] button,[data-testid="stDownloadButton"] button{border:1px solid #584166;background:#302338;color:var(--ink);border-radius:9px;min-height:2.65rem}
+[data-testid="stButton"] button:hover,[data-testid="stDownloadButton"] button:hover{border-color:#b68bcb;background:#45314f;color:#fff}
+[data-testid="stButton"] button[kind="primary"],[data-testid="stFormSubmitButton"] button[kind="primary"]{background:#79508d;color:#fff;border-color:#9565ac}
+[data-testid="stButton"] button:disabled{background:#251e2c;color:#86788f;border-color:#3b3044}
+[data-baseweb="input"],[data-baseweb="select"]>div,[data-baseweb="textarea"]{background:#211a28!important;border-color:#51415d!important;color:var(--ink)!important}
+input,textarea{color:var(--ink)!important}
+[data-testid="stProgressBarTrack"]>div{background:#a580ba}
+.st-key-sidebar_health [data-testid="stProgressBarTrack"]>div,.st-key-overview_health [data-testid="stProgressBarTrack"]>div{background:#82b29a}
+.st-key-sidebar_mana [data-testid="stProgressBarTrack"]>div,.st-key-overview_mana [data-testid="stProgressBarTrack"]>div{background:#9c91dc}
+.st-key-overview_hero{padding:1rem;border:1px solid #594365;border-radius:18px;background:linear-gradient(120deg,#34233e,#211a28);box-shadow:0 14px 40px #0002}
+.st-key-overview_hero [data-testid="stMetric"]{background:#201725aa}
+.stat-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:.6rem}
+.stat-grid.elements{grid-template-columns:repeat(6,minmax(0,1fr))}
+.stat-tile{background:#241c2c;border:1px solid var(--line);border-radius:12px;padding:.7rem .85rem;min-width:0}
+.stat-tile span{display:block;color:var(--muted);font-size:.75rem;overflow-wrap:anywhere}
+.stat-tile strong{display:block;font-size:1.3rem;color:var(--ink);margin-top:.2rem}
+.combatant-card{box-shadow:0 8px 24px #0002;border-color:#51405d}
+.combatant-card.acting{border-left-color:#d0a5e5}
+.st-key-battle_header{border-radius:12px;border:1px solid #594365;padding:.35rem;background:#221a2b}
+[data-testid="stLayoutWrapper"]:has(>.st-key-battle_header){background:#17131d;padding-bottom:.35rem}
+.st-key-turn_action{border:1px solid var(--line);border-radius:14px;padding:1rem;background:#211a28}
+[role="tablist"]{gap:.75rem;border-bottom-color:var(--line)}
+[role="tab"][aria-selected="true"]{color:#d7b5e9}
+@media(max-width:640px){
+ [data-testid="stMainBlockContainer"]{padding-left:.8rem;padding-right:.8rem}
+ .main-title{font-size:1.6rem}.subtitle{font-size:.8rem}
+ .stat-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.stat-grid.elements{grid-template-columns:repeat(3,minmax(0,1fr))}
+ .stat-tile{padding:.6rem .7rem}.stat-tile strong{font-size:1.1rem}
+ .st-key-overview_hero{padding:.7rem}.st-key-overview_hero [data-testid="stMetric"]{padding:.35rem .5rem}
+ .st-key-overview_hero [data-testid="stMetricLabel"] p{font-size:.7rem}
+ .st-key-turn_action{padding:.75rem}
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -295,7 +346,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -306,6 +357,19 @@ def migrate(saved):
         target.setdefault("heal_amount", 0)
         nonnegative_int(target["heal_amount"], "Сила лечения")
         validate_tree(target, {"description": ""})
+        if target.get('element_defense_mode', 'rating') not in ('rating', 'percent'):
+            raise ValueError('Неизвестный способ расчёта сопротивлений')
+        if target.get('element_defense_mode') == 'percent':
+            if any(not isinstance(v, (int,float)) or isinstance(v,bool) or not math.isfinite(v) or not -100 <= v <= 95 for v in target['resists'].values()):
+                raise ValueError('Сопротивления в процентах должны быть от −100 до 95')
+        if 'sheet_profile' in target:
+            profile = target['sheet_profile']
+            template = imported_friend()['sheet_profile']
+            validate_tree(profile, template)
+            if not template.keys() <= profile.keys(): raise ValueError('Неполный лист персонажа друга')
+            for field in ('attack','critical_damage','critical_chance','level','free_points'):
+                if profile[field] < 0: raise ValueError('Боевые параметры листа не могут быть отрицательными')
+            if profile['critical_chance'] > 100: raise ValueError('Шанс крита должен быть не выше 100%')
     if saved.get("schema_version", 5) < 13:
         for key in ("dark_resist", "water_sense", "double_flame", "ritual_black_flame", "cold_calculation"):
             data["passives"][key]["desc"] = DEFAULT["passives"][key]["desc"]
@@ -458,7 +522,7 @@ def migrate(saved):
     for enemy in data["enemies"]:
         if "side" in enemy and enemy["side"] not in ("Враг", "Союзник", "Нейтральный"):
             raise ValueError("Неизвестная сторона участника боя")
-    data["schema_version"] = 14
+    data["schema_version"] = 15
     return data
 
 
@@ -628,7 +692,13 @@ def damage_preview(target, amount, damage_type="Физический", final=Fal
     if not isinstance(defense_factor, (int, float)) or not math.isfinite(defense_factor) or not 0 <= defense_factor <= 1:
         raise ValueError("Неверная доля сопротивления")
     defense = effective_defense(target, damage_type) * defense_factor
-    incoming = amount if final else real_dmg(amount, defense)
+    if not final and damage_type != "Физический" and target.get("element_defense_mode") == "percent":
+        resistance = target.get("resists", {}).get(damage_type, 0) + sum(
+            effect["value"] for effect in target.get("effects", [])
+            if effect["kind"] == "resist" and effect["element"] == damage_type)
+        incoming = max(0, round(amount * (1 - min(95, max(-100, resistance)) * defense_factor / 100)))
+    else:
+        incoming = amount if final else real_dmg(amount, defense)
     racial_reduction = 0
     if not final and damage_type == "Тьма" and "dark_resist" in target.get("passives", {}):
         protected = round(incoming * .9)
@@ -1480,7 +1550,7 @@ def render_participant_editor(data, token):
             resists = {}
             cols = st.columns(2)
             for i, element in enumerate(ELEMENTS):
-                resists[element] = cols[i % 2].number_input(element, min_value=0, value=target.get("resists", {}).get(element, 0))
+                resists[element] = cols[i % 2].number_input(element, min_value=-100 if target.get("element_defense_mode") == "percent" else 0, max_value=95 if target.get("element_defense_mode") == "percent" else None, value=target.get("resists", {}).get(element, 0))
             if token == "player": st.caption("Максимум HP Калисты рассчитывается из уровня и характеристик.")
             if st.form_submit_button("Сохранить участника"):
                 if not name.strip(): st.error("Укажи имя")
@@ -1547,6 +1617,9 @@ def combatant_heal(data, healer_token, recipient_token, amount):
 def render_combatant_action(data, source_token, victim_token):
     source = participant(data, source_token)
     victim = participant(data, victim_token)
+    if source.get('sheet_profile', {}).get('abilities'):
+        with st.expander('Способности · '+source['name']):
+            st.write(source['sheet_profile']['abilities'])
     operation = st.radio("Действие участника", ["Атака", "Лечение"], horizontal=True,
                          key=f"actor_action_{source_token}", label_visibility="collapsed")
     if operation == "Лечение":
@@ -1562,7 +1635,9 @@ def render_combatant_action(data, source_token, victim_token):
         st.caption("Силу лечения задаёт ведущий; обычное лечение ограничено максимумом HP.")
     else:
         c1, c2 = st.columns(2)
+        critical = st.checkbox("Критический удар", key=f"actor_critical_{source_token}") if source.get("sheet_profile") else False
         amount = c1.number_input("Урон атаки", min_value=0, value=source.get("attack_damage", 0), key=f"actor_attack_amount_{source_token}")
+        if critical: amount = round(source["sheet_profile"]["critical_damage"])
         dtype = c2.selectbox("Тип урона", DAMAGE_TYPES, index=DAMAGE_TYPES.index(source.get("attack_type", "Физический")), key=f"actor_attack_type_{source_token}")
         result = damage_preview(victim, amount, dtype)
         invisible = victim is data and data.get("ten_invis")
@@ -1585,6 +1660,111 @@ def render_attack(data, token):
         victim = remembered_select("Цель действия", tokens, f"attack_victim_{token}", default=default,
                                    format_func=lambda value: participant_label(data, value))
         render_combatant_action(data, token, victim)
+
+
+def render_stat_grid(values, elements=False):
+    tiles = ''.join(f'<div class="stat-tile"><span>{escape(str(label))}</span><strong>{escape(str(value))}</strong></div>' for label, value in values)
+    st.markdown(f'<div class="stat-grid{ " elements" if elements else ""}">{tiles}</div>', unsafe_allow_html=True)
+
+
+SHEOGARATH_REFERENCE = {'name': 'Шеогарат', 'race': 'Драконит', 'class': 'Вне класса', 'texts': {'traits': 'Видящий - возможность видеть суть вещей (трансформируемый)\nСкорострел - возможность нанести две атаки одновременно (рукопашка трансформируемый)\nДесница Ока - раз в три хода пробитие +10 +урон 1к6 игнорирует Крит неудачу (Кул даун 7 дней)\nСовершенная контр атака - всякий раз контратакую атаку ближнего боя ', 'attacks': '', 'notes-1': 'Грогор - кент крутой \nЭван - торгаш зерна кент грогора', 'items': 'Бездонная сумка:', 'equipment': 'Двуручный меч холода (уникальный) 🔵\nГрозовой меч 🔵\nСапоги ниргхала  (🟠 1/8) (невозможно сбить с ног)', 'allies': 'Китис УВАЖЕЕЕЕЕНИЕ', 'notes-2': 'Элиза - богиня смерти\nГрегор - бог мучений и страданий \nМилитара - богиня воинов\nРевиронг - бог меткости и леса\nХарт - бог авантюр, лжи и хитрости\nСата - богиня удачи \nФералис - бог жизни и света'}, 'attacks': [{'name': 'Кислотные брызги', 'formula': '1d8+[con]', 'notes': '30 м\nТикающий дэбафф 3х -2 брони стак до 5', 'type': ''}, {'name': 'Когти', 'formula': '1d6+[dex]', 'notes': '\n', 'type': 'Коо'}, {'name': 'Газовое облако ', 'formula': '1d10+[con]', 'notes': 'Область применения 10х10', 'type': ''}, {'name': 'Двуручный меч', 'formula': '2d6+[str]+2', 'notes': '', 'type': 'Режущий'}], 'resources': [{'name': 'Лагерь истинного авантюриста', 'qty': 1, 'max': 1}, {'name': 'Голова кельтузада', 'qty': 1, 'max': 1}, {'name': 'Первородная эссенция', 'qty': 9, 'max': 1}], 'coins': {'gp': 4837, 'total': 4959.43, 'sp': 1089, 'cp': 1754, 'pp': 0, 'ep': 0}, 'bonuses': [{'target': 'weapon.weapon-1789683947798.attack', 'formula': '2', 'label': ''}, {'target': 'weapon.weapon-1789683947798.damage', 'formula': '1d8', 'label': 'Холод'}], 'speed': '60'}
+
+
+def imported_friend():
+    ally = {"name":"Персонаж друга", "hp":440, "hp_max":690, "armor":185,
+            "initiative":12, "attack_damage":302, "attack_type":"Физический", "heal_amount":0,
+            "effects":[], "dots":[], "element_defense_mode":"percent",
+            "description":"Уровень 17 · Ледяная скорбь",
+            "resists":{"Огонь":10,"Земля":95,"Вода":10,"Воздух":10,"Тьма":50,"Свет":-50},
+            "sheet_profile":{"source":"Лист_персонажа_тест_заебло.xlsx", "level":17, "race":"", "class":"", "free_points":64,
+                "stats":{"Сила":60,"Выносливость":35,"Ловкость":35,"Мудрость":10,"Интеллект":10,"Харизма":0},
+                "base_stats":{"Сила":10,"Выносливость":10,"Ловкость":10,"Мудрость":10,"Интеллект":10,"Харизма":10},
+                "attack":302.4,"critical_damage":654.8,"critical_chance":13.75,
+                "equipment":[{"slot":"Оружие 1","name":"Ледяная скорбь","description":"0/100", "bonuses":{"Сила":50,"Выносливость":25,"Ловкость":25,"Харизма":-10,"Атака":270,"Критический урон":50,"Шанс крита":7,"Тьма":50,"Свет":-50}}],
+                "abilities":"", "notes":"Имя, раса, класс и способности не заполнены в исходном листе. Инициатива не указана; её можно задать вручную."}}
+
+
+    reference = deepcopy(SHEOGARATH_REFERENCE)
+    ally['name'] = reference['name']
+    ally['description'] = reference['race'] + ' · ' + reference['class'] + ' · Уровень 17'
+    profile = ally['sheet_profile']
+    profile.update(race=reference['race'], **{'class':reference['class']}, reference=reference)
+    profile['abilities'] = reference['texts']['traits']
+    profile['notes'] = '\n\n'.join(reference['texts'][k] for k in ('notes-1','allies','notes-2') if reference['texts'][k])
+    profile['source'] += ' + Шеогарат — Long Story Short.json'
+    profile['equipment_note'] = reference['texts']['equipment']
+    return ally
+
+
+def render_party(data):
+    st.markdown("<div class='main-title'>Отряд</div>", unsafe_allow_html=True)
+    if st.button('Отменить последнее изменение', key='party_undo', disabled=not st.session_state.get('_undo_history')):
+        undo_last_action()
+    ally = data['ally']
+    profile = ally.get('sheet_profile')
+    if not profile:
+        st.info('Шеогарат · Драконит · Уровень 17 · HP 440/690 · Ледяная скорбь.')
+        st.caption('Загрузка заменит текущего союзника. Действие можно отменить в текущей сессии.')
+        if st.button('Загрузить персонажа из листа', key='friend_import', type='primary'):
+            data['ally'] = imported_friend()
+            if data['combat_active']: refresh_turn_order(data)
+            log('В отряд добавлен персонаж из листа')
+            persist_and_rerun('Загрузка персонажа друга')
+        render_combatant_card(data, 'ally', 'Текущий союзник')
+        return
+    render_combatant_card(data, 'ally', 'Персонаж игрока', active=True)
+    view = st.radio('Раздел персонажа', ['Лист', 'Снаряжение', 'Правка'], horizontal=True, key='friend_view', label_visibility='collapsed')
+    if view == 'Лист':
+        render_stat_grid(profile['stats'].items())
+        st.markdown("<div class='section-h'>Боевые характеристики</div>", unsafe_allow_html=True)
+        render_stat_grid([('Атака в листе',profile['attack']),('Критический урон',profile['critical_damage']),('Шанс крита',str(profile['critical_chance'])+'%'),('Свободные очки',profile['free_points'])])
+        st.markdown("<div class='section-h'>Сопротивления</div>", unsafe_allow_html=True)
+        render_stat_grid([(e,str(ally['resists'][e])+'%') for e in ELEMENTS], elements=True)
+        st.caption('Стихийная защита этого персонажа задана в процентах. Свет −50% увеличивает входящий урон в 1,5 раза. В бою урон округляется до целого HP; крит отмечается вручную.')
+        if profile['abilities']:
+            st.markdown("<div class='section-h'>Способности</div>", unsafe_allow_html=True)
+            for ability in profile['abilities'].splitlines():
+                if ability.strip(): st.markdown('- '+ability)
+        if profile.get('reference'):
+            with st.expander('Атаки из Long Story Short'):
+                for attack in profile['reference']['attacks']:
+                    st.write('**'+attack['name']+'** · '+attack['formula'])
+                    if attack['notes'].strip(): st.caption(attack['notes'])
+                st.caption('Бонус меча из JSON: +2 к атаке, +1d8 холода к урону. Эти формулы сохранены для справки; текущий урон берётся из Excel.')
+        if profile['notes']:
+            with st.expander('Связи и заметки'): st.markdown(profile['notes'])
+        scene = scene_record(data, data['active_scene_id'])
+        if scene:
+            with st.expander('Текущая сцена', expanded=True): st.markdown(scene_player_text(data, scene['id']))
+        st.caption('Экран игрока внутри общей программы. Доступ с отдельного устройства будет следующим этапом.')
+    elif view == 'Снаряжение':
+        for item in profile['equipment']:
+            with st.expander(item['slot']+' · '+item['name'], expanded=True):
+                st.write(item['description'])
+                st.write(' · '.join(f'{k}: {v:+}' for k,v in item['bonuses'].items()))
+        if profile.get('equipment_note'):
+            st.markdown("<div class='section-h'>Снаряжение из Long Story Short</div>", unsafe_allow_html=True)
+            st.write(profile['equipment_note'])
+        if profile.get('reference'):
+            st.markdown("<div class='section-h'>Бездонная сумка</div>", unsafe_allow_html=True)
+            for item in profile['reference']['resources']: st.write(f"{item['name']} × {item['qty']}")
+            coins = profile['reference']['coins']
+            st.caption(f"Монеты из JSON: {coins['gp']} золотых · {coins['sp']} серебряных · {coins['cp']} медных")
+    else:
+        with st.form('friend_identity'):
+            name = st.text_input('Имя персонажа', ally['name'])
+            race = st.text_input('Раса', profile['race'])
+            klass = st.text_input('Класс', profile['class'])
+            abilities = st.text_area('Способности и правила', profile['abilities'])
+            notes = st.text_area('Заметки персонажа', profile['notes'])
+            if st.form_submit_button('Сохранить лист'):
+                if not name.strip(): st.error('Укажи имя персонажа')
+                else:
+                    ally['name'] = name.strip()
+                    profile.update(race=race, **{'class':klass}, abilities=abilities, notes=notes)
+                    if data['combat_active']: refresh_turn_order(data)
+                    persist_and_rerun('Изменён лист персонажа друга')
+        render_participant_editor(data, 'ally')
 
 
 def render_combatant_card(data, token, title, active=False):
@@ -2115,8 +2295,10 @@ for pending, selected, search in (("_gm_select_scene", "gm_scene_selected", "gm_
 with st.sidebar:
     st.markdown("<div class='main-title' style='font-size:1.35rem'>✧ Калиста</div>", unsafe_allow_html=True)
     st.caption(f"Ур.{data['level']} · {data['class']}")
-    st.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0), text=f"HP {data['hp_current']}/{data['hp_max']}")
-    st.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0), text=f"MP {data['mana_current']}/{data['mana_max']}")
+    with st.container(key='sidebar_health'):
+        st.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0), text=f"HP {data['hp_current']}/{data['hp_max']}")
+    with st.container(key='sidebar_mana'):
+        st.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0), text=f"MP {data['mana_current']}/{data['mana_max']}")
     if data.get("combat_active"):
         st.markdown(f"**Раунд {data['round']}**")
         actor=get_current_actor(data)
@@ -2124,7 +2306,7 @@ with st.sidebar:
     active_scene = scene_record(data, data['active_scene_id'])
     if active_scene: st.caption('Сцена: ' + active_scene['name'])
     st.divider()
-    page=st.radio("Меню",["Обзор","Бой","Экипировка","Характеристики","Инвентарь","Заклинания","Квесты","Ведущий","Кубики","Биография"],label_visibility="collapsed", key="page")
+    page=st.radio("Меню",["Обзор","Бой","Отряд","Экипировка","Характеристики","Инвентарь","Заклинания","Квесты","Ведущий","Кубики","Биография"],label_visibility="collapsed", key="page")
     st.divider()
     if st.button("💾 Сохранить",use_container_width=True):
         if save(data): st.success("Сохранено")
@@ -2170,8 +2352,10 @@ if page=="Обзор":
             else:
                 st.caption("Портрет хранится в assets/kalista-portrait.png рядом с приложением.")
         with info_column:
-            st.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0),text=f"HP {data['hp_current']}/{data['hp_max']}")
-            st.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0),text=f"MP {data['mana_current']}/{data['mana_max']}")
+            with st.container(key='overview_health'):
+                st.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0),text=f"HP {data['hp_current']}/{data['hp_max']}")
+            with st.container(key='overview_mana'):
+                st.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0),text=f"MP {data['mana_current']}/{data['mana_max']}")
             m1,m2=st.columns(2)
             m1.metric("Сила закл.",f"+{data['spell_power']*100:.0f}%")
             m2.metric("Броня",data["armor"])
@@ -2179,13 +2363,9 @@ if page=="Обзор":
             m3.metric("Иниц.",data["initiative"])
             m4.metric("Очки",data["free_points"])
     st.markdown("<div class='section-h'>Сопротивления</div>", unsafe_allow_html=True)
-    rc=st.columns(6)
-    for i,e in enumerate(ELEMENTS):
-        rc[i].metric(e, data["resists"].get(e,0))
+    render_stat_grid([(e,data['resists'].get(e,0)) for e in ELEMENTS], elements=True)
     st.markdown("<div class='section-h'>Характеристики</div>", unsafe_allow_html=True)
-    cols=st.columns(4)
-    for i,n in enumerate(["Сила","Выносливость","Ловкость","Мудрость","Интеллект","Харизма","Дух"]):
-        cols[i%4].metric(n, total_stat(data,n))
+    render_stat_grid([(n,total_stat(data,n)) for n in ["Сила","Выносливость","Ловкость","Мудрость","Интеллект","Харизма","Дух"]])
     st.markdown("<div class='section-h'>Опыт</div>", unsafe_allow_html=True)
     x1,x2,x3=st.columns([2,1,1])
     ax=x1.number_input("XP",0,value=100,step=50)
@@ -2196,6 +2376,9 @@ if page=="Обзор":
 # ===================== БОЙ =====================
 elif page=="Бой":
     render_battle(data)
+
+elif page=="Отряд":
+    render_party(data)
 
 # ===================== ЭКИПИРОВКА =====================
 elif page=="Ведущий":
