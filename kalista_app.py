@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калист Клиф — v10 · компактный боевой стол
+Калиста Клиф — v11 · компактный боевой стол
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -20,7 +20,7 @@ from copy import deepcopy
 SAVE_FILE = Path(__file__).parent / "kalista_save.json"
 ELEMENTS = ["Огонь", "Земля", "Вода", "Воздух", "Тьма", "Свет"]
 
-st.set_page_config(page_title="✧ Калист Клиф ✧", page_icon="🔥", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="✧ Калиста Клиф ✧", page_icon="🔥", layout="wide", initial_sidebar_state="expanded")
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@500;700&family=Quattrocento+Sans:wght@400;700&display=swap');
@@ -31,13 +31,13 @@ div[data-testid="stMetricValue"]{font-size:1.25rem}
 .stButton>button{border-radius:8px;font-weight:600}
 .turn-now{background:#3D1A5C;border:2px solid #BB8FCE;border-radius:10px;padding:8px 12px;margin-bottom:6px}
 
-[data-testid="stLayoutWrapper"]:has(>.st-key-battle_header){position:sticky;top:3.5rem;z-index:50;background:#fff}
-.st-key-battle_header{background:#fff;padding:0 0 .35rem;border-bottom:1px solid #704080;gap:.35rem}
+[data-testid="stLayoutWrapper"]:has(>.st-key-battle_header){position:sticky;top:3.5rem;z-index:50;background:#18121f}
+.st-key-battle_header{background:#18121f;padding:0 0 .35rem;border-bottom:1px solid #704080;gap:.35rem}
 [data-testid="stMainBlockContainer"]:has(.st-key-battle_header){padding-top:4rem;padding-bottom:2rem}
 [data-testid="stMainBlockContainer"]:has(.st-key-battle_header)>[data-testid="stVerticalBlock"]{gap:.65rem}
-.st-key-battle_header [data-testid="stRadio"] p{color:#33203b}
-.st-key-battle_header [data-testid="stButton"] button{background:#fff;color:#33203b;border:1px solid #d6cadd}
-.st-key-battle_header [data-testid="stButton"] button:disabled{background:#f3f0f6;color:#929099}
+.st-key-battle_header [data-testid="stRadio"] p{color:#e0d3ec}
+.st-key-battle_header [data-testid="stButton"] button{background:#30213c;color:#f0e5f6;border:1px solid #60456f}
+.st-key-battle_header [data-testid="stButton"] button:disabled{background:#211a29;color:#746980}
 .battle-card{background:#261531;border:1px solid #7d5291;border-radius:10px;padding:8px 12px;margin-bottom:6px}
 .battle-name{font-weight:700;color:#ecdff3;display:flex;justify-content:space-between;gap:8px;font-size:1rem}
 .battle-name span{font-weight:400;color:#cbb5d4;font-size:.85rem}
@@ -47,12 +47,30 @@ div[data-testid="stMetricValue"]{font-size:1.25rem}
 .st-key-battle_header button{padding:.35rem .25rem;min-height:2.4rem;font-size:.9rem}
 .st-key-battle_header [role="radiogroup"]{gap:.3rem .7rem;flex-wrap:wrap}
 @media(max-width:640px){.block-container{padding-left:1rem;padding-right:1rem}.battle-name{flex-direction:column;gap:2px}.battle-values{gap:4px 12px}.battle-values b{font-size:.82rem}.st-key-battle_header button{font-size:.78rem}.st-key-battle_header [role="radiogroup"] label{font-size:.85rem}[data-testid="stLayoutWrapper"]:has(>.st-key-battle_header){top:3.5rem}}
+
+.battle-strip{padding:.5rem .65rem;color:#ede2f4;display:flex;flex-direction:column;gap:.15rem}
+.battle-strip strong{font-size:1rem}.battle-strip span{font-size:.78rem;color:#b9a7c5}
+.combatant-card{border:1px solid #564062;border-radius:14px;padding:12px 16px;background:#211928;color:#eee3f5;margin-bottom:8px}
+.combatant-card.acting{border-left:4px solid #b680d5;background:linear-gradient(110deg,#35213f,#211928)}
+.combat-eyebrow{text-transform:uppercase;letter-spacing:.09em;font-size:.67rem;color:#c39eda;font-weight:700}
+.combatant-name{font-size:1.25rem;font-weight:700;margin-top:2px}.combat-identity{color:#b8a5c5;font-size:.78rem;margin:2px 0 8px}
+.combat-health-label{display:flex;justify-content:space-between;font-size:.8rem}.combat-health{height:6px;background:#49354f;border-radius:9px;overflow:hidden;margin:5px 0 8px}
+.combat-health>div{height:100%;background:#87b59b;border-radius:9px;transition:width .2s}
+.combat-details{font-size:.8rem;color:#b9a7c5}.combat-badges{display:flex;gap:5px;flex-wrap:wrap;margin-top:5px}
+.combat-badge{font-size:.7rem;background:#473053;color:#dbc0eb;padding:2px 7px;border-radius:20px}
+[data-testid="stMainBlockContainer"]:has(.st-key-battle_header) [data-testid="stVerticalBlock"]{gap:.65rem}
+@media(max-width:640px){.combatant-card{padding:9px 12px}.combatant-name{font-size:1.05rem}.combat-identity{margin-bottom:5px}.combat-details{font-size:.75rem}}
+
+
+.st-key-turn_action [data-testid="stHorizontalBlock"]{flex-wrap:nowrap!important;gap:.65rem}
+.st-key-turn_action [data-testid="stColumn"]{min-width:0!important;flex:1 1 0!important}
+@media(max-width:640px){.st-key-battle_header [role="radiogroup"]{gap:.2rem .4rem}.st-key-battle_header [data-testid="stRadio"] p{font-size:.75rem}.battle-strip{padding:.3rem .5rem}}
 </style>
 """, unsafe_allow_html=True)
 
 # ===================== DEFAULT =====================
 DEFAULT = {
-    "name": "Калист Клиф", "race": "Тёмный эльф (Дроу)", "class": "Маг огня и тьмы",
+    "name": "Калиста Клиф", "race": "Тёмный эльф (Дроу)", "class": "Маг огня и тьмы",
     "level": 21, "xp": 18450, "xp_to_next": 2150, "free_points": 0,
     "hp_current": 420, "hp_max": 820, "mana_current": 0, "mana_max": 2950,
     "base_stats": {"Сила":10,"Выносливость":15,"Ловкость":14,"Мудрость":10,"Интеллект":60,"Харизма":10,"Дух":35},
@@ -260,9 +278,17 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
+    if data["name"] in ("Калист", "Калист Клиф"):
+        data["name"] = "Калиста Клиф" if data["name"].endswith("Клиф") else "Калиста"
+    for actor in data.get("turn_order", []):
+        if actor.get("kind") == "player": actor["name"] = data["name"]
+    for _, target in participants(data):
+        target.setdefault("heal_amount", 0)
+        nonnegative_int(target["heal_amount"], "Сила лечения")
+        validate_tree(target, {"description": ""})
     if saved.get("schema_version", 5) < 10:
         data["passives"]["shadow_child"]["desc"] = DEFAULT["passives"]["shadow_child"]["desc"]
         # Старые сохранения не содержат момента активации: даём два будущих начала хода.
@@ -396,7 +422,7 @@ def migrate(saved):
         raise ValueError("Остаток начал хода невидимости должен быть от 0 до 2")
     if data["ten_invis"] != (data["ten_invis_turn_starts_left"] > 0):
         raise ValueError("Состояние невидимости не соответствует её длительности")
-    data["schema_version"] = 10
+    data["schema_version"] = 11
     return data
 
 
@@ -1179,11 +1205,10 @@ def render_battle_header(data):
     turn = f"Раунд {data['round']} · {actor['name']}" if actor else "Бой не начат" if not data["combat_active"] else "Нет активных участников"
     shield = sum(effect["value"] for effect in data.get("effects", []) if effect["kind"] == "shield")
     with st.container(key="battle_header"):
-        st.markdown(f"""<div class="battle-card"><div class="battle-name">{escape(data['name'])} <span>{escape(turn)}</span></div>
-        <div class="battle-values"><b>HP {data['hp_current']}/{data['hp_max']}</b><b>MP {data['mana_current']}/{data['mana_max']}</b>
-        <b>Щит {shield}</b><b>Пепел {data['pepel']}/5 · Тень {data['ten']}/5</b></div></div>""", unsafe_allow_html=True)
+        st.markdown(f"""<div class="battle-strip"><strong>{escape(turn)}</strong>
+        <span>{escape(data['name'])} · HP {data['hp_current']}/{data['hp_max']} · MP {data['mana_current']}/{data['mana_max']} · Щит {shield} · Пепел {data['pepel']}/5 · Тень {data['ten']}/5</span></div>""", unsafe_allow_html=True)
         b1, b2, b3, b4 = st.columns(4)
-        if b1.button("Бой", disabled=data["combat_active"], key="battle_start", use_container_width=True):
+        if b1.button("Начать", disabled=data["combat_active"], key="battle_start", use_container_width=True):
             data["combat_active"] = True
             for _, target in participants(data):
                 for effect in target.get("effects", []): effect["applied_round"] = 0
@@ -1193,7 +1218,7 @@ def render_battle_header(data):
             log("=== Бой начат. Раунд 1 ===")
             for message in begin_actor_turn(data): log(message)
             persist_and_rerun("Начало боя")
-        if b2.button("Ход", disabled=not data["combat_active"] or not data["turn_order"], key="battle_next", use_container_width=True):
+        if b2.button("Далее", disabled=not data["combat_active"] or not data["turn_order"], key="battle_next", use_container_width=True):
             for message in advance_turn(data): log(message)
             persist_and_rerun("Следующий ход")
         history = st.session_state.get("_undo_history", [])
@@ -1208,8 +1233,10 @@ def render_battle_header(data):
             persist_and_rerun("Завершение боя")
         prefs = st.session_state.setdefault("_battle_preferences", {})
         if "battle_section" not in st.session_state:
-            st.session_state["battle_section"] = prefs.get("battle_section", "Калиста")
-        selected = st.radio("Раздел боя", ["Калиста", "Участники", "Эффекты", "Очередь", "Журнал"],
+            st.session_state["battle_section"] = prefs.get("battle_section", "Ход")
+        if st.session_state["battle_section"] == "Калиста":
+            st.session_state["battle_section"] = "Ход"
+        selected = st.radio("Раздел боя", ["Ход", "Участники", "Эффекты", "Очередь", "Журнал"],
                             key="battle_section", horizontal=True, label_visibility="collapsed")
         prefs["battle_section"] = selected
 
@@ -1346,11 +1373,13 @@ def render_participant_editor(data, token):
     with st.expander("Изменить характеристики участника", expanded=False):
         with st.form(f"edit_participant_{token}"):
             name = st.text_input("Имя", value=target["name"])
+            description = st.text_input("Кто это / заметка", value=target.get("description", ""))
             c1, c2 = st.columns(2)
             hp = c1.number_input("HP", min_value=0, value=target[hp_key])
             maximum = c2.number_input("Максимум HP", min_value=1, value=target[maximum_key], disabled=token == "player")
             armor = st.number_input("Броня без временных эффектов", min_value=0, value=target.get("armor", 0))
             attack = st.number_input("Урон атаки", min_value=0, value=target.get("attack_damage", target.get("phys_attack", 0)))
+            heal_amount = st.number_input("Сила лечения", min_value=0, value=target.get("heal_amount", 0), disabled=token == "player")
             attack_type = st.selectbox("Тип атаки", DAMAGE_TYPES, index=DAMAGE_TYPES.index(target.get("attack_type", "Физический")))
             resists = {}
             cols = st.columns(2)
@@ -1361,6 +1390,7 @@ def render_participant_editor(data, token):
                 if not name.strip(): st.error("Укажи имя")
                 else:
                     target["name"] = name.strip(); target[hp_key] = hp
+                    target["description"] = description.strip()
                     if token != "player": target[maximum_key] = maximum
                     if token == "player":
                         data["armor_adjustment"] += armor - data["armor"]
@@ -1370,6 +1400,7 @@ def render_participant_editor(data, token):
                     else:
                         target["armor"] = armor; target["attack_damage"] = attack
                         target["attack_type"] = attack_type; target["resists"] = resists
+                        target["heal_amount"] = heal_amount
                     if data["combat_active"]: refresh_turn_order(data)
                     log(f"Изменён участник: {name.strip()}")
                     persist_and_rerun()
@@ -1402,33 +1433,98 @@ def exclude_from_queue_after_delete(data, token):
     return []
 
 
-def render_attack(data, token):
-    target = participant(data, token)
-    if token == "player":
-        return
-    with st.expander(f"Атака · {target['name']}", expanded=True):
-        victims = [candidate for candidate, other in participants(data) if candidate != token and other[hp_fields(other)[0]] > 0]
-        if not victims:
-            st.caption("Нет доступных целей")
-            return
-        default = "player" if token.startswith("enemy:") else next((candidate for candidate in victims if candidate.startswith("enemy:")), victims[0])
-        victim_token = remembered_select("Цель атаки", victims, f"attack_victim_{token}", default=default,
-                                        format_func=lambda value: participant_label(data, value))
-        victim = participant(data, victim_token)
-        amount = target.get("attack_damage", 0)
-        dtype = target.get("attack_type", "Физический")
+def combatant_heal(data, healer_token, recipient_token, amount):
+    """Лечение по решению ведущего; неизвестные стоимость и кулдаун не добавляем."""
+    nonnegative_int(amount, "Сила лечения")
+    healer = participant(data, healer_token)
+    recipient = participant(data, recipient_token)
+    if healer[hp_fields(healer)[0]] <= 0:
+        raise ValueError("У лечащего участника 0 HP")
+    if amount <= 0:
+        raise ValueError("Укажи силу лечения выше 0")
+    result = apply_healing(recipient, amount)
+    if data["combat_active"]: refresh_turn_order(data)
+    return (f"{participant_label(data, healer_token)} → {participant_label(data, recipient_token)}: "
+            f"лечение +{result['restored']} HP (избыток {result['excess']})")
+
+
+def render_combatant_action(data, source_token, victim_token):
+    source = participant(data, source_token)
+    victim = participant(data, victim_token)
+    operation = st.radio("Действие участника", ["Атака", "Лечение"], horizontal=True,
+                         key=f"actor_action_{source_token}", label_visibility="collapsed")
+    if operation == "Лечение":
+        amount = st.number_input("Восстановить HP", min_value=0, value=source.get("heal_amount", 0),
+                                 key=f"actor_heal_amount_{source_token}")
+        hp_key, maximum_key = hp_fields(victim)
+        restored = min(amount, max(0, victim[maximum_key] - victim[hp_key]))
+        st.caption(f"{participant_label(data, source_token)} → {participant_label(data, victim_token)} · +{restored} HP · после лечения {victim[hp_key] + restored}/{victim[maximum_key]}")
+        if st.button("Вылечить цель", key=f"actor_heal_{source_token}", type="primary", use_container_width=True,
+                     disabled=amount <= 0 or restored == 0 or source[hp_fields(source)[0]] <= 0):
+            log(combatant_heal(data, source_token, victim_token, amount))
+            persist_and_rerun(f"Лечение: {source['name']}")
+        st.caption("Силу лечения задаёт ведущий; обычное лечение ограничено максимумом HP.")
+    else:
+        c1, c2 = st.columns(2)
+        amount = c1.number_input("Урон атаки", min_value=0, value=source.get("attack_damage", 0), key=f"actor_attack_amount_{source_token}")
+        dtype = c2.selectbox("Тип урона", DAMAGE_TYPES, index=DAMAGE_TYPES.index(source.get("attack_type", "Физический")), key=f"actor_attack_type_{source_token}")
         result = damage_preview(victim, amount, dtype)
         invisible = victim is data and data.get("ten_invis")
-        st.caption(f"{amount} · {dtype}")
-        st.info("Атака будет отменена невидимостью" if invisible else damage_message(victim["name"], result))
-        if st.button("Атаковать", key=f"attack_{token}", disabled=target[hp_fields(target)[0]] == 0,
+        st.caption("Цель невидима — атака не нанесёт урона" if invisible else damage_message(victim["name"], result))
+        if st.button("Атаковать цель", key=f"attack_{source_token}", disabled=source[hp_fields(source)[0]] <= 0 or victim[hp_fields(victim)[0]] <= 0 or amount <= 0,
                      type="primary", use_container_width=True):
             if invisible:
-                log(f"{target['name']}: промах — {victim['name']} невидима")
+                log(f"{participant_label(data, source_token)}: промах — {victim['name']} невидима")
             else:
                 result = apply_damage(victim, amount, dtype)
-                log(f"{target['name']} → " + damage_message(victim["name"], result))
-            persist_and_rerun("Атака: " + target["name"])
+                log(f"{participant_label(data, source_token)} → " + damage_message(participant_label(data, victim_token), result))
+            persist_and_rerun("Атака: " + source["name"])
+
+
+def render_attack(data, token):
+    if token == "player": return
+    with st.expander(f"Действия вне очереди · {participant_label(data, token)}", expanded=False):
+        tokens = [candidate for candidate, _ in participants(data)]
+        default = "player" if token.startswith("enemy:") else next((candidate for candidate in tokens if candidate.startswith("enemy:")), "player")
+        victim = remembered_select("Цель действия", tokens, f"attack_victim_{token}", default=default,
+                                   format_func=lambda value: participant_label(data, value))
+        render_combatant_action(data, token, victim)
+
+
+def render_combatant_card(data, token, title, active=False):
+    target = participant(data, token)
+    hp_key, maximum_key = hp_fields(target)
+    shield = sum(effect["value"] for effect in target.get("effects", []) if effect["kind"] == "shield")
+    role = "Героиня" if token == "player" else "Союзник" if token == "ally" else f"Враг #{target['id']}"
+    identity = [role]
+    if target.get("level"): identity.append(f"Уровень {target['level']}")
+    if token == "player": identity.extend([target.get("race", ""), target.get("class", "")])
+    elif target.get("size"): identity.append(target["size"])
+    if target.get("is_elite"): identity.append("Элитный")
+    if target.get("description"): identity.append(target["description"][:160])
+    ratio = min(100, max(0, 100 * target[hp_key] / max(1, target[maximum_key])))
+    details = [f"Броня {effective_defense(target, 'Физический')}", f"Щит {shield}"]
+    if "mana_current" in target: details.append(f"MP {target['mana_current']}/{target['mana_max']}")
+    elif active: details.append(f"Атака {target.get('attack_damage', 0)} · {target.get('attack_type', 'Физический')}")
+    if active and target.get("heal_amount", 0): details.append(f"Лечение {target['heal_amount']}")
+    if active: details.append(f"Инициатива {data.get('initiative_overrides', {}).get(token, target.get('initiative', 10))}")
+    effects = [effect['name'] for effect in target.get('effects', [])]
+    if target is data and data.get('ten_invis'): effects.append('Невидимость')
+    if target is data and data.get('ten_resist_boost'): effects.append('Сопротивления Тени')
+    badges = ''.join(f'<span class="combat-badge">{escape(name)}</span>' for name in effects[:4])
+    if len(effects) > 4: badges += f'<span class="combat-badge">ещё {len(effects)-4}</span>'
+    if not active:
+        st.markdown(f"""<div class="combatant-card combat-target"><div class="combat-eyebrow">{escape(title)} · {escape(role)}</div>
+        <div class="combat-health-label"><strong>{escape(participant_label(data, token))}</strong><span>HP {target[hp_key]} / {target[maximum_key]}</span></div>
+        <div class="combat-health"><div style="width:{ratio:.2f}%"></div></div>
+        <div class="combat-details">{escape(' · '.join(details))}</div><div class="combat-badges">{badges}</div></div>""", unsafe_allow_html=True)
+        return
+    st.markdown(f"""<div class="combatant-card {'acting' if active else ''}">
+    <div class="combat-eyebrow">{escape(title)}</div><div class="combatant-name">{escape(participant_label(data, token))}</div>
+    <div class="combat-identity">{escape(' · '.join(filter(None, identity)))}</div>
+    <div class="combat-health-label">HP <strong>{target[hp_key]} / {target[maximum_key]}</strong></div>
+    <div class="combat-health"><div style="width:{ratio:.2f}%"></div></div>
+    <div class="combat-details">{escape(' · '.join(details))}</div><div class="combat-badges">{badges}</div></div>""", unsafe_allow_html=True)
 
 
 def render_new_enemy(data):
@@ -1504,6 +1600,10 @@ def render_queue(data, token):
 def render_battle(data):
     render_battle_header(data)
     section = st.session_state["battle_section"]
+    current = get_current_actor(data) if data["combat_active"] else None
+    active_token = actor_token(current) if current else None
+    if section != "Ход" and active_token and actor_target(data, current) is not None:
+        render_combatant_card(data, active_token, "Сейчас ходит", active=True)
     if section == "Журнал":
         st.caption("История отмены хранится в текущей сессии; состояние игры сохраняется в файл.")
         search = st.text_input("Найти в журнале", key="battle_log_search")
@@ -1513,17 +1613,36 @@ def render_battle(data):
         st.download_button("Скачать журнал", "\n".join(reversed(data["combat_log"])), file_name="kalista_combat_log.txt", mime="text/plain")
         return
     tokens = [token for token, _ in participants(data)]
-    default = next((token for token in tokens if token.startswith("enemy:") and participant(data, token)["hp"] > 0), "player")
-    token = remembered_select("Цель / участник", tokens, "battle_target", default=default,
+    if section == "Ход":
+        if not active_token:
+            active_token = remembered_select("Кто действует", tokens, "battle_manual_actor", default="player",
+                                             format_func=lambda value: participant_label(data, value))
+        default = ("player" if active_token.startswith("enemy:") else
+                   next((t for t in tokens if t.startswith("enemy:") and participant(data, t)["hp"] > 0), "player"))
+        with st.container(key="turn_cards"):
+            acting_column, target_column = st.columns(2)
+            with acting_column:
+                render_combatant_card(data, active_token, "Сейчас ходит" if current else "Действие вне боя", active=True)
+            with target_column:
+                token = remembered_select("Цель действия", tokens, f"turn_target_{active_token}", default=default,
+                                          format_func=lambda value: participant_label(data, value))
+                render_combatant_card(data, token, "Цель")
+        if active_token == "player": render_selected_spell(data, participant(data, token))
+        else:
+            with st.container(key="turn_action"):
+                render_combatant_action(data, active_token, token)
+        if data["combat_log"]: st.caption("Последнее: " + data["combat_log"][0])
+        return
+    default = active_token or "player"
+    token = remembered_select("Выбранный участник", tokens, "battle_target", default=default,
                               format_func=lambda value: participant_label(data, value))
     target = participant(data, token)
     hp_key, maximum_key = hp_fields(target)
     shield = sum(effect["value"] for effect in target.get("effects", []) if effect["kind"] == "shield")
     st.caption(f"HP {target[hp_key]}/{target[maximum_key]} · Щит {shield} · Броня {effective_defense(target, 'Физический')} · Эффектов {len(target.get('effects', []))}")
-    if section == "Калиста":
-        render_selected_spell(data, target)
-    elif section == "Участники":
-        render_quick_action(data, token)
+    if section == "Участники":
+        with st.expander("Ручная правка: урон, лечение, мана и щит", expanded=False):
+            render_quick_action(data, token)
         render_attack(data, token)
         render_participant_editor(data, token)
         render_new_enemy(data)
@@ -1540,7 +1659,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 10:
+if data.get("schema_version", 5) < 11:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1557,7 +1676,7 @@ if "_next_battle_target" in st.session_state:
 
 # ===================== SIDEBAR =====================
 with st.sidebar:
-    st.markdown("<div class='main-title' style='font-size:1.35rem'>✧ Калист</div>", unsafe_allow_html=True)
+    st.markdown("<div class='main-title' style='font-size:1.35rem'>✧ Калиста</div>", unsafe_allow_html=True)
     st.caption(f"Ур.{data['level']} · {data['class']}")
     st.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0), text=f"HP {data['hp_current']}/{data['hp_max']}")
     st.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0), text=f"MP {data['mana_current']}/{data['mana_max']}")
@@ -1889,13 +2008,13 @@ elif page=="Биография":
 Ненавидит слабость в себе и презирает тех, кто сдаётся. При этом сама боится потерять контроль над собственной магией.
 
 ### Предыстория
-Калист родилась в **Доме Клиф** — большом и гордом матриархальном доме дроу, известном своими экспериментами на стыке огня и тьмы.
+Калиста родилась в **Доме Клиф** — большом и гордом матриархальном доме дроу, известном своими экспериментами на стыке огня и тьмы.
 Её мать, матриарх **Ильраэль Клиф**, была одержима идеей создать «чистое пламя бездны» — огонь, питаемый самой пустотой.
-В возрасте шестнадцати лет Калист стала свидетельницей падения своего дома: во время особо опасного ритуала что-то пошло не так.
+В возрасте шестнадцати лет Калиста стала свидетельницей падения своего дома: во время особо опасного ритуала что-то пошло не так.
 Чёрное пламя вырвалось из-под контроля и уничтожило почти весь Дом Клиф за одну ночь.
 Выжила только она — потому что в последний момент мать затолкала её в защитный круг и сама приняла основной удар.
 
-С тех пор Калист странствует. Сначала по Подземью, потом — на поверхность.
+С тех пор Калиста странствует. Сначала по Подземью, потом — на поверхность.
 Она продолжает исследования матери, но уже более осторожно и методично.
 Носит с собой единственную реликвию дома — **Фамильный Амулет** — и клянётся, что либо доведёт работу до конца, либо погибнет, пытаясь.
 На поверхности её часто принимают за обычную тёмную эльфийку-отшельницу. Мало кто догадывается, насколько глубоко она погружена в запретные знания.
