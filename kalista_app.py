@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v12 · компактный боевой стол
+Калиста Клиф — v13 · компактный боевой стол
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -128,25 +128,26 @@ DEFAULT = {
     "enemies": [],
     "next_enemy_id": 1,
     "passives": {
-        # Расовые (справочные)
+        # Расовые: числовая защита и справочные правила
         "darkvision": {"name":"Зрение в темноте","type":"racial","used":False,"desc":"Видит в полной темноте на 36м. Яркий свет может ослепить на 1 ход."},
-        "dark_resist": {"name":"Сопротивление тьме","type":"racial","used":False,"desc":"Базовое сопр. Тьме +35, доп. +10% к сопротивлению магии тьмы."},
-        "water_sense": {"name":"Чувствительность к воде","type":"racial","used":False,"desc":"Бонус к сопр. Воде. Долгий дождь вызывает дискомфорт."},
+        "dark_resist": {"name":"Сопротивление тьме","type":"racial","used":False,"desc":"Базовые +35 уже включены в характеристики. Получаемый урон Тьмой дополнительно уменьшается на 10% после сопротивления, перед щитом."},
+        "water_sense": {"name":"Чувствительность к воде","type":"racial","used":False,"desc":"Базовое сопротивление Воде 10 уже учтено; отдельной прибавки нет. Долгий дождь вызывает дискомфорт."},
         "drow_grace": {"name":"Дроу-грация","type":"racial","used":False,"desc":"+2 к скрытности и акробатике в темноте/слабом свете."},
         # Классовые
-        "double_flame": {"name":"Двойное пламя","type":"class","used":False,"desc":"+5% урона, если предыдущее заклинание было другой школы (Огонь↔Тьма). Работает автоматически."},
+        "double_flame": {"name":"Двойное пламя","type":"class","used":False,"desc":"+5% прямого урона при Огонь↔Тьма. Любой успешный каст задаёт предыдущую школу, включая щит. Огонь+Тьма прерывает цепочку."},
         "ash_lady": {"name":"Повелительница пепла","type":"class","used":False,"desc":"Огненные заклинания дают Пепел. При 5 — активация: след. огненное игнор 30% сопр. огню."},
         "shadow_child": {"name":"Дитя тени","type":"class","used":False,"desc":"Тёмные заклинания дают Тень. При 5 — активация: невидимость до начала 3-го хода Калисты (ход активации — 1-й) ИЛИ +20 к сопротивлениям (предел 95) до начала 3-го хода Калисты."},
         "mana_reserve": {"name":"Магический резерв","type":"class","used":False,"desc":"При мане <20% перед восстановлением: +50% регенерации на 3 конца раунда. Повтор — после достижения 20% и нового падения ниже порога."},
         # Особые (активируемые, раз в день/отдых)
-        "ritual_black_flame": {"name":"Ритуал Чёрного Пламени","type":"special","used":False,"desc":"Раз в день: следующее Пламя души +40% урона без долгого каста."},
-        "cold_calculation": {"name":"Холодный расчёт","type":"special","used":False,"desc":"В начале боя (1 ход): +10% шанса крита до конца боя."},
+        "ritual_black_flame": {"name":"Ритуал Чёрного Пламени","type":"special","used":False,"desc":"Следующее Пламя души: +40% прямого урона, совместимо с критом и Пеплом. Усиление сохраняется между боями; восстановление — долгим отдыхом."},
+        "cold_calculation": {"name":"Холодный расчёт","type":"special","used":False,"desc":"До боя или в первый ход Калисты: +10 процентных пунктов крита до конца боя. Снова доступно в следующем бою."},
         "memory_of_house": {"name":"Память Дома Клиф","type":"special","used":False,"desc":"Раз в долгий отдых: преимущество на проверку знаний о запретной магии."},
     },
     "mana_reserve_ticks": 0,
     "mana_reserve_armed": True,
     "soul_flame_boost": False,
     "crit_boost_active": False,
+    "player_turns_started": 0,
     "pepel_empower": False,   # следующее огненное игнор 30% fire resist
     "ten_invis": False,       # до начала третьего хода Калисты
     "ten_invis_turn_starts_left": 0,  # два следующих начала её хода после активации
@@ -278,7 +279,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -289,6 +290,15 @@ def migrate(saved):
         target.setdefault("heal_amount", 0)
         nonnegative_int(target["heal_amount"], "Сила лечения")
         validate_tree(target, {"description": ""})
+    if saved.get("schema_version", 5) < 13:
+        for key in ("dark_resist", "water_sense", "double_flame", "ritual_black_flame", "cold_calculation"):
+            data["passives"][key]["desc"] = DEFAULT["passives"][key]["desc"]
+        if data["combat_active"]:
+            player_index = next((i for i, actor in enumerate(data["turn_order"]) if actor.get("kind") == "player"), None)
+            data["player_turns_started"] = max(0, data["round"] - 1) + int(player_index is not None and player_index <= data["current_turn"])
+        else:
+            data["player_turns_started"] = 0
+            if not data["crit_boost_active"]: data["passives"]["cold_calculation"]["used"] = False
     if saved.get("schema_version", 5) < 12:
         data["passives"]["shadow_child"]["desc"] = DEFAULT["passives"]["shadow_child"]["desc"]
     if saved.get("schema_version", 5) < 10:
@@ -427,7 +437,8 @@ def migrate(saved):
     nonnegative_int(data["ten_resist_boost"], "Длительность сопротивлений Тени")
     if data["ten_resist_boost"] > 2:
         raise ValueError("Остаток начал хода сопротивлений Тени должен быть от 0 до 2")
-    data["schema_version"] = 12
+    nonnegative_int(data["player_turns_started"], "Число начатых ходов Калисты")
+    data["schema_version"] = 13
     return data
 
 
@@ -598,11 +609,16 @@ def damage_preview(target, amount, damage_type="Физический", final=Fal
         raise ValueError("Неверная доля сопротивления")
     defense = effective_defense(target, damage_type) * defense_factor
     incoming = amount if final else real_dmg(amount, defense)
+    racial_reduction = 0
+    if not final and damage_type == "Тьма" and "dark_resist" in target.get("passives", {}):
+        protected = round(incoming * .9)
+        racial_reduction = incoming - protected
+        incoming = protected
     capacity = sum(effect["value"] for effect in target.get("effects", []) if effect["kind"] == "shield")
     absorbed = 0 if bypass_shields else min(incoming, capacity)
     hp_key, _ = hp_fields(target)
     hp_loss = min(max(0, target[hp_key]), incoming - absorbed)
-    return {"incoming": incoming, "absorbed": absorbed, "hp_loss": hp_loss,
+    return {"incoming": incoming, "absorbed": absorbed, "hp_loss": hp_loss, "racial_reduction": racial_reduction,
             "overkill": incoming - absorbed - hp_loss, "defense": defense,
             "hp_after": max(0, target[hp_key] - hp_loss)}
 
@@ -671,7 +687,8 @@ def tick_mana_regeneration(data):
 
 def damage_message(name, result):
     return (f"{name}: после защиты {result['incoming']} · щит −{result['absorbed']} · "
-            f"HP −{result['hp_loss']} → {result['hp_after']}")
+            f"HP −{result['hp_loss']} → {result['hp_after']}" +
+            (f" · защита от Тьмы −{result['racial_reduction']}" if result.get("racial_reduction") else ""))
 
 
 def tick_periodic(target):
@@ -741,6 +758,7 @@ def begin_actor_turn(data):
     actor = get_current_actor(data)
     if not actor or actor["kind"] != "player":
         return []
+    data["player_turns_started"] = data.get("player_turns_started", 0) + 1
     messages = []
     if data.get("ten_invis"):
         data["ten_invis_turn_starts_left"] -= 1
@@ -835,8 +853,7 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
                   "duration": spell.get("effect_duration") or None,
                   "source": f"spell:{spell['id']}", "desc": spell.get("desc", "")}
         validate_effect(effect)
-    dual = {data.get("last_school"), spell["school"]} == {"Огонь", "Тьма"}
-    soul = bool(data.get("soul_flame_boost") and spell["name"] == "Пламя души")
+    dual, soul = spell_bonuses(data, spell)
     raw = spell_raw(amount, data.get("spell_power", 0), dual, soul) if action == "damage" else amount
     if crit and action == "damage":
         raw = round(raw * 1.5)
@@ -1215,6 +1232,58 @@ def reset_participant_widgets():
     st.session_state["_reset_resource_widgets"] = True
 
 
+def special_availability(data, key):
+    passive = data["passives"][key]
+    if passive["used"]: return False, "Уже использовано"
+    if key == "cold_calculation" and data["combat_active"]:
+        actor = get_current_actor(data)
+        if data.get("player_turns_started", 0) != 1 or not actor or actor["kind"] != "player":
+            return False, "Доступно до боя или в первый ход Калисты"
+    return True, ""
+
+
+def activate_special(data, key):
+    allowed, reason = special_availability(data, key)
+    if not allowed: raise ValueError(reason)
+    data["passives"][key]["used"] = True
+    if key == "ritual_black_flame": data["soul_flame_boost"] = True
+    if key == "cold_calculation": data["crit_boost_active"] = True
+    return f"Особое умение: {data['passives'][key]['name']}"
+
+
+def effective_crit_chance(data):
+    return min(1.0, max(0.0, data.get("crit_chance", .065) + (.10 if data.get("crit_boost_active") else 0)))
+
+
+def start_combat(data):
+    data["combat_active"] = True
+    for _, target in participants(data):
+        for effect in target.get("effects", []): effect["applied_round"] = 0
+    data["round"] = 1
+    data["player_turns_started"] = 0
+    data["turn_order"] = build_turn_order(data)
+    data["current_turn"] = 0
+    return ["=== Бой начат. Раунд 1 ==="] + begin_actor_turn(data)
+
+
+def end_combat(data):
+    data["combat_active"] = False
+    data["turn_order"] = []
+    data["current_turn"] = 0
+    data["player_turns_started"] = 0
+    data["crit_boost_active"] = False
+    data["passives"]["cold_calculation"]["used"] = False
+    return "=== Бой окончен ==="
+
+
+def spell_bonuses(data, spell):
+    # Одна функция для предпросмотра и применения; периодический урон не усиливаем.
+    damage = spell_action(spell) == "damage"
+    dual = damage and {data.get("last_school"), spell["school"]} == {"Огонь", "Тьма"}
+    soul = bool(damage and data.get("soul_flame_boost") and spell["name"] == "Пламя души")
+    return dual, soul
+
+
 def render_battle_header(data):
     actor = get_current_actor(data) if data["combat_active"] else None
     turn = f"Раунд {data['round']} · {actor['name']}" if actor else "Бой не начат" if not data["combat_active"] else "Нет активных участников"
@@ -1224,14 +1293,7 @@ def render_battle_header(data):
         <span>{escape(data['name'])} · HP {data['hp_current']}/{data['hp_max']} · MP {data['mana_current']}/{data['mana_max']} · Щит {shield} · Пепел {data['pepel']}/5 · Тень {data['ten']}/5</span></div>""", unsafe_allow_html=True)
         b1, b2, b3, b4 = st.columns(4)
         if b1.button("Начать", disabled=data["combat_active"], key="battle_start", use_container_width=True):
-            data["combat_active"] = True
-            for _, target in participants(data):
-                for effect in target.get("effects", []): effect["applied_round"] = 0
-            data["round"] = 1
-            data["turn_order"] = build_turn_order(data)
-            data["current_turn"] = 0
-            log("=== Бой начат. Раунд 1 ===")
-            for message in begin_actor_turn(data): log(message)
+            for message in start_combat(data): log(message)
             persist_and_rerun("Начало боя")
         if b2.button("Далее", disabled=not data["combat_active"] or not data["turn_order"], key="battle_next", use_container_width=True):
             for message in advance_turn(data): log(message)
@@ -1241,10 +1303,7 @@ def render_battle_header(data):
         if b3.button("Отмена", disabled=not history, key="battle_undo", help=hint, use_container_width=True):
             undo_last_action()
         if b4.button("Стоп", disabled=not data["combat_active"], key="battle_stop", use_container_width=True):
-            data["combat_active"] = False
-            data["turn_order"] = []
-            data["crit_boost_active"] = False
-            log("=== Бой окончен ===")
+            log(end_combat(data))
             persist_and_rerun("Завершение боя")
         prefs = st.session_state.setdefault("_battle_preferences", {})
         if "battle_section" not in st.session_state:
@@ -1266,10 +1325,12 @@ def render_selected_spell(data, target):
                             (f" · КД {spells[value]['cd_left']}" if spells[value]['cd_left'] else ""))
     spell = spells[sid]
     action = spell_action(spell)
-    dual = {data.get("last_school"), spell["school"]} == {"Огонь", "Тьма"}
-    soul = data.get("soul_flame_boost") and spell["name"] == "Пламя души"
+    dual, soul = spell_bonuses(data, spell)
     raw = spell_raw(spell["base"], data.get("spell_power", 0), dual, soul) if action == "damage" else spell.get("effect_value", 0)
     st.caption(f"{spell.get('desc', '')} · Мана {spell['mana']} · КД {spell.get('cd_left', 0)}/{spell.get('cd_max', 0)}")
+    bonuses = (["Двойное пламя +5%"] if dual else []) + (["Ритуал +40%"] if soul else [])
+    if bonuses: st.caption("Прямой урон: " + " · ".join(bonuses))
+    if action == "damage": st.caption(f"Шанс крита: {effective_crit_chance(data)*100:.1f}%")
     shield_amount = None
     if action == "shield":
         shield_amount = st.number_input("Сила щита", min_value=0, value=spell.get("effect_value", 0), key=f"cast_shield_{sid}")
@@ -1304,7 +1365,7 @@ def render_selected_spell(data, target):
     if action == "heal": can = can and raw > 0
     if action == "damage": can = can and target[hp_fields(target)[0]] > 0
     if st.button("Применить способность", key=f"cast_{sid}", disabled=not can, type="primary", use_container_width=True):
-        chance = min(1.0, max(0.0, data.get("crit_chance", .065) + (.10 if data.get("crit_boost_active") else 0)))
+        chance = effective_crit_chance(data)
         crit = action == "damage" and not override and (crit_mode == "Крит ведущего" or (crit_mode == "Бросок" and random.random() < chance))
         try:
             for message in cast_spell(data, spell, target, crit=crit,
@@ -1351,12 +1412,11 @@ def render_selected_spell(data, target):
         if data.get("soul_flame_boost"): st.caption("Ритуал: Пламя души +40%")
         for key, passive in data["passives"].items():
             if passive.get("type") == "special":
-                if st.button(passive["name"], key=f"battle_passive_{key}", disabled=passive["used"], use_container_width=True):
-                    passive["used"] = True
-                    if key == "ritual_black_flame": data["soul_flame_boost"] = True
-                    if key == "cold_calculation": data["crit_boost_active"] = True
-                    log(f"Особое умение: {passive['name']}")
+                allowed, reason = special_availability(data, key)
+                if st.button(passive["name"], key=f"battle_passive_{key}", disabled=not allowed, help=passive["desc"], use_container_width=True):
+                    log(activate_special(data, key))
                     persist_and_rerun()
+                if reason and not passive["used"]: st.caption(reason)
         p1, p2 = st.columns(2)
         if p1.button("+1 Пепел", key="pep_plus", use_container_width=True):
             data["pepel"] = min(5, data["pepel"] + 1); persist_and_rerun("Добавлен Пепел")
@@ -1673,7 +1733,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 12:
+if data.get("schema_version", 5) < 13:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1810,7 +1870,7 @@ elif page=="Характеристики":
         d2.metric("Сопр. контролю", f"{data.get('control_resist',0)*100:.1f}%")
         d2.metric("Инициатива", data["initiative"])
         d3.metric("Броня", data["armor"])
-        d3.metric("Крит", f"{data.get('crit_chance',0.065)*100:.1f}%")
+        d3.metric("Крит", f"{effective_crit_chance(data)*100:.1f}%")
 
     with st.expander("Сопротивления стихиям"):
         rc = st.columns(6)
@@ -1831,22 +1891,14 @@ elif page=="Характеристики":
             if p.get("type") != "special":
                 continue
             c1, c2 = st.columns([3.5, 1])
-            status = "✅ использовано" if p["used"] else "🟢 доступно"
+            allowed, reason = special_availability(data, k)
+            status = "✅ использовано" if p["used"] else "🟢 доступно" if allowed else "⏳ сейчас недоступно"
             c1.markdown(f"**{p['name']}** — {status}<br>{p['desc']}", unsafe_allow_html=True)
-            if not p["used"]:
-                if c2.button("Использовать", key=f"pas_{k}"):
-                    p["used"] = True
-                    if k == "ritual_black_flame":
-                        data["soul_flame_boost"] = True
-                        log("Ритуал: Пламя души усилено")
-                    elif k == "cold_calculation":
-                        data["crit_boost_active"] = True
-                        log("Холодный расчёт: +10% крита")
-                    else:
-                        log(f"Использовано: {p['name']}")
-                    persist_and_rerun()
-            else:
-                c2.write("—")
+            if c2.button("Использовать", key=f"pas_{k}", disabled=not allowed):
+                log(activate_special(data, k))
+                persist_and_rerun()
+            if reason and not p["used"]: c1.caption(reason)
+
 
 elif page=="Инвентарь":
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Инвентарь</div>", unsafe_allow_html=True)
