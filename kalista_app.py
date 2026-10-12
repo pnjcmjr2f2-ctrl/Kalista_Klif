@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калист Клиф — v9 · компактный боевой стол
+Калист Клиф — v10 · компактный боевой стол
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -118,7 +118,7 @@ DEFAULT = {
         # Классовые
         "double_flame": {"name":"Двойное пламя","type":"class","used":False,"desc":"+5% урона, если предыдущее заклинание было другой школы (Огонь↔Тьма). Работает автоматически."},
         "ash_lady": {"name":"Повелительница пепла","type":"class","used":False,"desc":"Огненные заклинания дают Пепел. При 5 — активация: след. огненное игнор 30% сопр. огню."},
-        "shadow_child": {"name":"Дитя тени","type":"class","used":False,"desc":"Тёмные заклинания дают Тень. При 5 — активация: невидимость 1 ход ИЛИ +20 к сопротивлениям (предел 95) на 2 раунда."},
+        "shadow_child": {"name":"Дитя тени","type":"class","used":False,"desc":"Тёмные заклинания дают Тень. При 5 — активация: невидимость до начала 3-го хода Калисты (ход активации — 1-й) ИЛИ +20 к сопротивлениям (предел 95) на 2 раунда."},
         "mana_reserve": {"name":"Магический резерв","type":"class","used":False,"desc":"При мане <20% перед восстановлением: +50% регенерации на 3 конца раунда. Повтор — после достижения 20% и нового падения ниже порога."},
         # Особые (активируемые, раз в день/отдых)
         "ritual_black_flame": {"name":"Ритуал Чёрного Пламени","type":"special","used":False,"desc":"Раз в день: следующее Пламя души +40% урона без долгого каста."},
@@ -130,7 +130,8 @@ DEFAULT = {
     "soul_flame_boost": False,
     "crit_boost_active": False,
     "pepel_empower": False,   # следующее огненное игнор 30% fire resist
-    "ten_invis": False,       # невидимость 1 ход
+    "ten_invis": False,       # до начала третьего хода Калисты
+    "ten_invis_turn_starts_left": 0,  # два следующих начала её хода после активации
     "ten_resist_boost": 0,    # раундов +20 к сопротивлениям осталось
     "status_effects": [],     # [{"name","duration","desc"}]
     "portrait_url": "",
@@ -259,9 +260,13 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
+    if saved.get("schema_version", 5) < 10:
+        data["passives"]["shadow_child"]["desc"] = DEFAULT["passives"]["shadow_child"]["desc"]
+        # Старые сохранения не содержат момента активации: даём два будущих начала хода.
+        data["ten_invis_turn_starts_left"] = 2 if data["ten_invis"] else 0
     if saved.get("schema_version", 5) < 9:
         data["passives"]["mana_reserve"]["desc"] = DEFAULT["passives"]["mana_reserve"]["desc"]
     for enemy in data["enemies"]:
@@ -387,7 +392,11 @@ def migrate(saved):
     data["turn_excluded"] = list(dict.fromkeys(token for token in data["turn_excluded"] if token in known_tokens))
     if not 0 <= data["mana_reserve_ticks"] <= 3:
         raise ValueError("Остаток тиков резерва должен быть от 0 до 3")
-    data["schema_version"] = 9
+    if not 0 <= data["ten_invis_turn_starts_left"] <= 2:
+        raise ValueError("Остаток начал хода невидимости должен быть от 0 до 2")
+    if data["ten_invis"] != (data["ten_invis_turn_starts_left"] > 0):
+        raise ValueError("Состояние невидимости не соответствует её длительности")
+    data["schema_version"] = 10
     return data
 
 
@@ -678,6 +687,28 @@ def actor_target(data, actor):
         return None
 
 
+def activate_shadow_invisibility(data):
+    """Ход активации — первый; заканчиваем на втором следующем начале хода."""
+    if data["ten"] < 5:
+        raise ValueError("Для невидимости нужно 5 Тени")
+    data["ten"] = 0
+    data["ten_invis"] = True
+    data["ten_invis_turn_starts_left"] = 2
+    return "Тень: невидимость до начала 3-го хода Калисты (ход активации — 1-й)"
+
+
+def begin_actor_turn(data):
+    """Считаем только настоящее начало хода Калисты при продвижении очереди."""
+    actor = get_current_actor(data)
+    if not actor or actor["kind"] != "player" or not data.get("ten_invis"):
+        return []
+    data["ten_invis_turn_starts_left"] -= 1
+    if data["ten_invis_turn_starts_left"] == 0:
+        data["ten_invis"] = False
+        return ["Невидимость спала: начало 3-го хода Калисты после активации"]
+    return []
+
+
 def finish_round(data):
     completed = data["round"]
     messages = tick_mana_regeneration(data)
@@ -690,13 +721,11 @@ def finish_round(data):
         data["ten_resist_boost"] -= 1
         if data["ten_resist_boost"] == 0:
             messages.append("Бонус сопротивления от Тени истёк")
-    if data.get("ten_invis"):
-        data["ten_invis"] = False
-        messages.append("Невидимость спала")
     data["round"] += 1
     data["turn_order"] = build_turn_order(data)
     data["current_turn"] = 0
     messages.append(f"=== Раунд {data['round']} ===")
+    messages.extend(begin_actor_turn(data))
     return messages
 
 
@@ -715,6 +744,7 @@ def advance_turn(data):
     while data["current_turn"] < len(data["turn_order"]):
         target = actor_target(data, data["turn_order"][data["current_turn"]])
         if target is not None and target[hp_fields(target)[0]] > 0:
+            messages.extend(begin_actor_turn(data))
             return messages
         data["current_turn"] += 1
     messages.extend(finish_round(data))
@@ -856,7 +886,6 @@ def enemy_ai_act(data, enemy):
         return
     target = min(targets, key=lambda item: item[hp_fields(item)[0]])
     if target is data and data.get("ten_invis"):
-        data["ten_invis"] = False
         log(f"{enemy['name']}: атака отменена невидимостью")
         return
     result = apply_damage(target, enemy.get("attack_damage", 10), enemy.get("attack_type", "Физический"))
@@ -1072,6 +1101,7 @@ def exclude_from_queue(data, token):
         data["current_turn"] = index
         if index >= len(data["turn_order"]):
             return finish_round(data)
+        return begin_actor_turn(data)
     return []
 
 
@@ -1111,7 +1141,7 @@ def undo_last_action():
     if not history:
         return False
     entry = history[-1]
-    restored = deepcopy(entry["data"])
+    restored = migrate(deepcopy(entry["data"]))
     recalc(restored)
     restored["combat_log"].insert(0, f"[{datetime.now().strftime('%H:%M:%S')}] Отменено: {entry['label']}")
     restored["combat_log"] = restored["combat_log"][:80]
@@ -1161,6 +1191,7 @@ def render_battle_header(data):
             data["turn_order"] = build_turn_order(data)
             data["current_turn"] = 0
             log("=== Бой начат. Раунд 1 ===")
+            for message in begin_actor_turn(data): log(message)
             persist_and_rerun("Начало боя")
         if b2.button("Ход", disabled=not data["combat_active"] or not data["turn_order"], key="battle_next", use_container_width=True):
             for message in advance_turn(data): log(message)
@@ -1266,8 +1297,7 @@ def render_selected_spell(data, target):
             log("Пепел: следующее огненное заклинание игнорирует 30% сопротивления")
             persist_and_rerun()
         if p2.button("🌑 Невидимость", key="ten_inv", disabled=data["ten"] < 5, use_container_width=True):
-            data["ten"] = 0; data["ten_invis"] = True
-            log("Тень: невидимость")
+            log(activate_shadow_invisibility(data))
             persist_and_rerun()
         if st.button("🌑 +20 к сопротивлениям", key="ten_res", disabled=data["ten"] < 5, use_container_width=True):
             data["ten"] = 0; data["ten_resist_boost"] = 2
@@ -1275,7 +1305,7 @@ def render_selected_spell(data, target):
             persist_and_rerun()
         st.caption(f"Регенерация: {data['mana_regen']} MP в конце раунда · резерв: {data.get('mana_reserve_ticks', 0)} усиленных тика осталось")
         if data.get("pepel_empower"): st.caption("🔥 Усиление огня готово")
-        if data.get("ten_invis"): st.caption("🌑 Невидимость активна")
+        if data.get("ten_invis"): st.caption(f"🌑 Невидимость: до начала 3-го хода; осталось {data['ten_invis_turn_starts_left']} начала хода Калисты")
         if data.get("ten_resist_boost"): st.caption(f"🌑 Сопротивления усилены: {data['ten_resist_boost']} раунда")
         if data.get("soul_flame_boost"): st.caption("Ритуал: Пламя души +40%")
         for key, passive in data["passives"].items():
@@ -1299,6 +1329,7 @@ def render_selected_spell(data, target):
         if c2.button("Долгий отдых", key="battle_long_rest", use_container_width=True):
             data["hp_current"] = data["hp_max"]; data["mana_current"] = data["mana_max"]
             data["mana_reserve_ticks"] = 0; data["mana_reserve_armed"] = True
+            data["ten_invis_turn_starts_left"] = 0
             data["pepel"] = data["ten"] = data["ten_resist_boost"] = 0
             for flag in ("soul_flame_boost", "crit_boost_active", "pepel_empower", "ten_invis"): data[flag] = False
             data["effects"] = []; data["dots"] = []; data["status_effects"] = []
@@ -1365,7 +1396,9 @@ def exclude_from_queue_after_delete(data, token):
         data["current_turn"] = next(i for i, actor in enumerate(data["turn_order"]) if actor_token(actor) == actor_token(current))
     elif index >= len(data["turn_order"]):
         return finish_round(data)
-    else: data["current_turn"] = index
+    else:
+        data["current_turn"] = index
+        return begin_actor_turn(data)
     return []
 
 
@@ -1391,7 +1424,6 @@ def render_attack(data, token):
         if st.button("Атаковать", key=f"attack_{token}", disabled=target[hp_fields(target)[0]] == 0,
                      type="primary", use_container_width=True):
             if invisible:
-                data["ten_invis"] = False
                 log(f"{target['name']}: промах — {victim['name']} невидима")
             else:
                 result = apply_damage(victim, amount, dtype)
@@ -1508,6 +1540,9 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
+if data.get("schema_version", 5) < 10:
+    data = migrate(data)
+    st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
     st.session_state.pop("ah", None)
     for key in list(st.session_state):
