@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v11 · компактный боевой стол
+Калиста Клиф — v12 · компактный боевой стол
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -136,7 +136,7 @@ DEFAULT = {
         # Классовые
         "double_flame": {"name":"Двойное пламя","type":"class","used":False,"desc":"+5% урона, если предыдущее заклинание было другой школы (Огонь↔Тьма). Работает автоматически."},
         "ash_lady": {"name":"Повелительница пепла","type":"class","used":False,"desc":"Огненные заклинания дают Пепел. При 5 — активация: след. огненное игнор 30% сопр. огню."},
-        "shadow_child": {"name":"Дитя тени","type":"class","used":False,"desc":"Тёмные заклинания дают Тень. При 5 — активация: невидимость до начала 3-го хода Калисты (ход активации — 1-й) ИЛИ +20 к сопротивлениям (предел 95) на 2 раунда."},
+        "shadow_child": {"name":"Дитя тени","type":"class","used":False,"desc":"Тёмные заклинания дают Тень. При 5 — активация: невидимость до начала 3-го хода Калисты (ход активации — 1-й) ИЛИ +20 к сопротивлениям (предел 95) до начала 3-го хода Калисты."},
         "mana_reserve": {"name":"Магический резерв","type":"class","used":False,"desc":"При мане <20% перед восстановлением: +50% регенерации на 3 конца раунда. Повтор — после достижения 20% и нового падения ниже порога."},
         # Особые (активируемые, раз в день/отдых)
         "ritual_black_flame": {"name":"Ритуал Чёрного Пламени","type":"special","used":False,"desc":"Раз в день: следующее Пламя души +40% урона без долгого каста."},
@@ -150,7 +150,7 @@ DEFAULT = {
     "pepel_empower": False,   # следующее огненное игнор 30% fire resist
     "ten_invis": False,       # до начала третьего хода Калисты
     "ten_invis_turn_starts_left": 0,  # два следующих начала её хода после активации
-    "ten_resist_boost": 0,    # раундов +20 к сопротивлениям осталось
+    "ten_resist_boost": 0,    # начал хода Калисты до окончания +20 к сопротивлениям
     "status_effects": [],     # [{"name","duration","desc"}]
     "portrait_url": "",
     "crit_chance": 0.065,
@@ -278,7 +278,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -289,6 +289,8 @@ def migrate(saved):
         target.setdefault("heal_amount", 0)
         nonnegative_int(target["heal_amount"], "Сила лечения")
         validate_tree(target, {"description": ""})
+    if saved.get("schema_version", 5) < 12:
+        data["passives"]["shadow_child"]["desc"] = DEFAULT["passives"]["shadow_child"]["desc"]
     if saved.get("schema_version", 5) < 10:
         data["passives"]["shadow_child"]["desc"] = DEFAULT["passives"]["shadow_child"]["desc"]
         # Старые сохранения не содержат момента активации: даём два будущих начала хода.
@@ -422,7 +424,10 @@ def migrate(saved):
         raise ValueError("Остаток начал хода невидимости должен быть от 0 до 2")
     if data["ten_invis"] != (data["ten_invis_turn_starts_left"] > 0):
         raise ValueError("Состояние невидимости не соответствует её длительности")
-    data["schema_version"] = 11
+    nonnegative_int(data["ten_resist_boost"], "Длительность сопротивлений Тени")
+    if data["ten_resist_boost"] > 2:
+        raise ValueError("Остаток начал хода сопротивлений Тени должен быть от 0 до 2")
+    data["schema_version"] = 12
     return data
 
 
@@ -723,16 +728,30 @@ def activate_shadow_invisibility(data):
     return "Тень: невидимость до начала 3-го хода Калисты (ход активации — 1-й)"
 
 
+def activate_shadow_resistance(data):
+    if data["ten"] < 5:
+        raise ValueError("Для сопротивлений нужно 5 Тени")
+    data["ten"] = 0
+    data["ten_resist_boost"] = 2
+    return "Тень: +20 к сопротивлениям до начала 3-го хода Калисты (ход активации — 1-й)"
+
+
 def begin_actor_turn(data):
     """Считаем только настоящее начало хода Калисты при продвижении очереди."""
     actor = get_current_actor(data)
-    if not actor or actor["kind"] != "player" or not data.get("ten_invis"):
+    if not actor or actor["kind"] != "player":
         return []
-    data["ten_invis_turn_starts_left"] -= 1
-    if data["ten_invis_turn_starts_left"] == 0:
-        data["ten_invis"] = False
-        return ["Невидимость спала: начало 3-го хода Калисты после активации"]
-    return []
+    messages = []
+    if data.get("ten_invis"):
+        data["ten_invis_turn_starts_left"] -= 1
+        if data["ten_invis_turn_starts_left"] == 0:
+            data["ten_invis"] = False
+            messages.append("Невидимость спала: начало 3-го хода Калисты после активации")
+    if data.get("ten_resist_boost", 0) > 0:
+        data["ten_resist_boost"] -= 1
+        if data["ten_resist_boost"] == 0:
+            messages.append("Сопротивления Тени истекли: начало 3-го хода Калисты после активации")
+    return messages
 
 
 def finish_round(data):
@@ -743,10 +762,6 @@ def finish_round(data):
     for spell in data["spells"]:
         if spell["cd_left"] > 0:
             spell["cd_left"] -= 1
-    if data.get("ten_resist_boost", 0) > 0:
-        data["ten_resist_boost"] -= 1
-        if data["ten_resist_boost"] == 0:
-            messages.append("Бонус сопротивления от Тени истёк")
     data["round"] += 1
     data["turn_order"] = build_turn_order(data)
     data["current_turn"] = 0
@@ -1327,13 +1342,12 @@ def render_selected_spell(data, target):
             log(activate_shadow_invisibility(data))
             persist_and_rerun()
         if st.button("🌑 +20 к сопротивлениям", key="ten_res", disabled=data["ten"] < 5, use_container_width=True):
-            data["ten"] = 0; data["ten_resist_boost"] = 2
-            log("Тень: +20 к сопротивлениям на 2 раунда")
+            log(activate_shadow_resistance(data))
             persist_and_rerun()
         st.caption(f"Регенерация: {data['mana_regen']} MP в конце раунда · резерв: {data.get('mana_reserve_ticks', 0)} усиленных тика осталось")
         if data.get("pepel_empower"): st.caption("🔥 Усиление огня готово")
         if data.get("ten_invis"): st.caption(f"🌑 Невидимость: до начала 3-го хода; осталось {data['ten_invis_turn_starts_left']} начала хода Калисты")
-        if data.get("ten_resist_boost"): st.caption(f"🌑 Сопротивления усилены: {data['ten_resist_boost']} раунда")
+        if data.get("ten_resist_boost"): st.caption(f"🌑 +20 к сопротивлениям: осталось {data['ten_resist_boost']} начала хода Калисты")
         if data.get("soul_flame_boost"): st.caption("Ритуал: Пламя души +40%")
         for key, passive in data["passives"].items():
             if passive.get("type") == "special":
@@ -1659,7 +1673,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 11:
+if data.get("schema_version", 5) < 12:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
