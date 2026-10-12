@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v13 · компактный боевой стол
+Калиста Клиф — v14 · компактный боевой стол
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -65,6 +65,15 @@ div[data-testid="stMetricValue"]{font-size:1.25rem}
 .st-key-turn_action [data-testid="stHorizontalBlock"]{flex-wrap:nowrap!important;gap:.65rem}
 .st-key-turn_action [data-testid="stColumn"]{min-width:0!important;flex:1 1 0!important}
 @media(max-width:640px){.st-key-battle_header [role="radiogroup"]{gap:.2rem .4rem}.st-key-battle_header [data-testid="stRadio"] p{font-size:.75rem}.battle-strip{padding:.3rem .5rem}}
+
+[data-testid="stMainBlockContainer"]:has(.st-key-gm_table){padding-top:3.5rem;padding-bottom:2rem}
+.st-key-gm_table [data-testid="stVerticalBlock"]{gap:.6rem}
+.st-key-gm_table h3{padding-top:.3rem;padding-bottom:.3rem}
+@media(max-width:640px){.st-key-gm_table .main-title{text-align:left}.st-key-gm_table button{font-size:.85rem}}
+
+.st-key-gm_filter [data-testid="stHorizontalBlock"],.st-key-gm_scene_actions [data-testid="stHorizontalBlock"],.st-key-gm_roster [data-testid="stHorizontalBlock"]{flex-wrap:nowrap!important;gap:.6rem}
+.st-key-gm_filter [data-testid="stColumn"],.st-key-gm_scene_actions [data-testid="stColumn"],.st-key-gm_roster [data-testid="stColumn"]{min-width:0!important}
+@media(max-width:640px){.st-key-gm_scene_actions [data-testid="stColumn"]{flex:1 1 0!important}.st-key-gm_roster button{font-size:.78rem}}
 </style>
 """, unsafe_allow_html=True)
 
@@ -161,6 +170,7 @@ DEFAULT = {
         {"id":3,"name":"Долг Серому","status":"Ожидание","desc":""},
     ],
     "notes": "Контроль важнее силы.",
+    "scenes": [], "npcs": [], "active_scene_id": "", "gm_notes": "",
     "combat_log": [],
     "resists": {"Огонь":75,"Земля":5,"Вода":10,"Воздух":5,"Тьма":95,"Свет":15},
     # Очередь
@@ -279,7 +289,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -438,7 +448,11 @@ def migrate(saved):
     if data["ten_resist_boost"] > 2:
         raise ValueError("Остаток начал хода сопротивлений Тени должен быть от 0 до 2")
     nonnegative_int(data["player_turns_started"], "Число начатых ходов Калисты")
-    data["schema_version"] = 13
+    validate_campaign(data)
+    for enemy in data["enemies"]:
+        if "side" in enemy and enemy["side"] not in ("Враг", "Союзник", "Нейтральный"):
+            raise ValueError("Неизвестная сторона участника боя")
+    data["schema_version"] = 14
     return data
 
 
@@ -1209,7 +1223,7 @@ def undo_last_action():
     st.session_state.data = restored
     st.session_state["_committed_data"] = deepcopy(restored)
     # Иначе значения созданных ранее полей могут немедленно вернуть отменённое действие.
-    keep = {"data", "_committed_data", "_undo_history", "page", "battle_section", "_battle_preferences"}
+    keep = {"data", "_committed_data", "_undo_history", "page", "battle_section", "gm_section", "_battle_preferences"}
     for key in list(st.session_state):
         if key not in keep: del st.session_state[key]
     st.rerun()
@@ -1288,6 +1302,8 @@ def render_battle_header(data):
     actor = get_current_actor(data) if data["combat_active"] else None
     turn = f"Раунд {data['round']} · {actor['name']}" if actor else "Бой не начат" if not data["combat_active"] else "Нет активных участников"
     shield = sum(effect["value"] for effect in data.get("effects", []) if effect["kind"] == "shield")
+    active_scene = scene_record(data, data['active_scene_id'])
+    if active_scene: turn += ' · ' + active_scene['name']
     with st.container(key="battle_header"):
         st.markdown(f"""<div class="battle-strip"><strong>{escape(turn)}</strong>
         <span>{escape(data['name'])} · HP {data['hp_current']}/{data['hp_max']} · MP {data['mana_current']}/{data['mana_max']} · Щит {shield} · Пепел {data['pepel']}/5 · Тень {data['ten']}/5</span></div>""", unsafe_allow_html=True)
@@ -1559,7 +1575,7 @@ def render_attack(data, token):
     if token == "player": return
     with st.expander(f"Действия вне очереди · {participant_label(data, token)}", expanded=False):
         tokens = [candidate for candidate, _ in participants(data)]
-        default = "player" if token.startswith("enemy:") else next((candidate for candidate in tokens if candidate.startswith("enemy:")), "player")
+        default = default_opponent(data, token)
         victim = remembered_select("Цель действия", tokens, f"attack_victim_{token}", default=default,
                                    format_func=lambda value: participant_label(data, value))
         render_combatant_action(data, token, victim)
@@ -1569,7 +1585,7 @@ def render_combatant_card(data, token, title, active=False):
     target = participant(data, token)
     hp_key, maximum_key = hp_fields(target)
     shield = sum(effect["value"] for effect in target.get("effects", []) if effect["kind"] == "shield")
-    role = "Героиня" if token == "player" else "Союзник" if token == "ally" else f"Враг #{target['id']}"
+    role = combat_side(data, token) + (f" #{target['id']}" if token.startswith("enemy:") else "")
     identity = [role]
     if target.get("level"): identity.append(f"Уровень {target['level']}")
     if token == "player": identity.extend([target.get("race", ""), target.get("class", "")])
@@ -1691,8 +1707,7 @@ def render_battle(data):
         if not active_token:
             active_token = remembered_select("Кто действует", tokens, "battle_manual_actor", default="player",
                                              format_func=lambda value: participant_label(data, value))
-        default = ("player" if active_token.startswith("enemy:") else
-                   next((t for t in tokens if t.startswith("enemy:") and participant(data, t)["hp"] > 0), "player"))
+        default = default_opponent(data, active_token)
         with st.container(key="turn_cards"):
             acting_column, target_column = st.columns(2)
             with acting_column:
@@ -1728,12 +1743,344 @@ def render_battle(data):
         st.caption("Последнее: " + data["combat_log"][0])
 
 
+# ===================== СЦЕНЫ И NPC =====================
+def scene_record(data, scene_id):
+    return next((item for item in data['scenes'] if item['id'] == scene_id), None)
+
+
+def npc_record(data, npc_id):
+    return next((item for item in data['npcs'] if item['id'] == npc_id), None)
+
+
+def validate_campaign(data):
+    scene_template = dict(id='', name='', location='', summary='', gm_notes='', result='', status='', npc_ids=[])
+    npc_template = dict(id='', name='', role='', location='', description='', public_notes='', gm_notes='', side='',
+                        combat=dict(hp=0, hp_max=1, armor=0, attack_damage=0, attack_type='', heal_amount=0,
+                                    initiative=0, resists={e:0 for e in ELEMENTS}))
+    for records, template in ((data['scenes'], scene_template), (data['npcs'], npc_template)):
+        ids = []
+        for record in records:
+            validate_tree(record, template)
+            if not set(template) <= record.keys(): raise ValueError('Неполные данные сцены или NPC')
+            if not record['id'].strip() or not record['name'].strip(): raise ValueError('У сцены или NPC должны быть ID и имя')
+            ids.append(record['id'])
+        if len(ids) != len(set(ids)): raise ValueError('Повторяющиеся ID сцен или NPC')
+    npc_ids = {npc['id'] for npc in data['npcs']}
+    for scene in data['scenes']:
+        if scene['status'] not in ('Подготовка', 'Идёт', 'На паузе', 'Завершена'): raise ValueError('Неизвестный статус сцены')
+        if any(not isinstance(npc_id, str) or npc_id not in npc_ids for npc_id in scene['npc_ids']):
+            raise ValueError('Сцена ссылается на неизвестного NPC')
+        if len(scene['npc_ids']) != len(set(scene['npc_ids'])): raise ValueError('NPC повторяется в сцене')
+    for npc in data['npcs']:
+        if npc['side'] not in ('Враг', 'Союзник', 'Нейтральный'): raise ValueError('Неизвестная сторона NPC')
+        combat = npc['combat']
+        if not set(npc_template['combat']) <= combat.keys(): raise ValueError('Неполные боевые характеристики NPC')
+        for key in ('hp', 'hp_max', 'armor', 'attack_damage', 'heal_amount', 'initiative'):
+            nonnegative_int(combat[key], 'Характеристика NPC')
+        if combat['hp_max'] < 1 or combat['hp'] > combat['hp_max']: raise ValueError('HP NPC должны быть в пределах максимума')
+        if combat['attack_type'] not in DAMAGE_TYPES: raise ValueError('Неизвестный тип атаки NPC')
+        if not set(ELEMENTS) <= combat['resists'].keys(): raise ValueError('Неполные сопротивления NPC')
+        for element in ELEMENTS: nonnegative_int(combat['resists'][element], 'Сопротивление NPC')
+    if not isinstance(data['active_scene_id'], str): raise ValueError('Неверный ID текущей сцены')
+    if data['active_scene_id'] and not scene_record(data, data['active_scene_id']): raise ValueError('Текущая сцена отсутствует')
+    active = [scene['id'] for scene in data['scenes'] if scene['status'] == 'Идёт']
+    if active != ([data['active_scene_id']] if data['active_scene_id'] else []):
+        raise ValueError('Текущая сцена и её статус не совпадают')
+
+
+def create_scene(data, name, location=''):
+    if not name.strip(): raise ValueError('Укажи название сцены')
+    scene = dict(id=uuid4().hex, name=name.strip(), location=location.strip(), summary='', gm_notes='', result='',
+                 status='Подготовка', npc_ids=[])
+    data['scenes'].append(scene)
+    return scene
+
+
+def create_npc(data, name, role=''):
+    if not name.strip(): raise ValueError('Укажи имя NPC')
+    npc = dict(id=uuid4().hex, name=name.strip(), role=role.strip(), location='', description='', public_notes='', gm_notes='', side='Нейтральный',
+               combat=dict(hp=100, hp_max=100, armor=0, attack_damage=0, attack_type='Физический', heal_amount=0,
+                           initiative=10, resists={e:0 for e in ELEMENTS}))
+    data['npcs'].append(npc)
+    return npc
+
+
+def activate_scene(data, scene_id):
+    scene = scene_record(data, scene_id)
+    if scene is None: raise ValueError('Сцена больше не существует')
+    for other in data['scenes']:
+        if other['id'] != scene_id and other['status'] == 'Идёт': other['status'] = 'На паузе'
+    scene['status'] = 'Идёт'
+    data['active_scene_id'] = scene_id
+
+
+def update_scene(data, scene_id, changes):
+    if scene_record(data, scene_id) is None: raise ValueError('Сцена больше не существует')
+    candidate = deepcopy(data)
+    scene = scene_record(candidate, scene_id)
+    scene.update(changes)
+    scene['id'] = scene_id
+    scene['name'] = scene['name'].strip()
+    if scene['status'] == 'Идёт': activate_scene(candidate, scene_id)
+    elif candidate['active_scene_id'] == scene_id: candidate['active_scene_id'] = ''
+    validate_campaign(candidate)
+    data['scenes'] = candidate['scenes']
+    data['active_scene_id'] = candidate['active_scene_id']
+
+
+def update_npc(data, npc_id, changes):
+    if npc_record(data, npc_id) is None: raise ValueError('NPC больше не существует')
+    candidate = deepcopy(data)
+    npc = npc_record(candidate, npc_id)
+    npc.update(changes)
+    npc['id'] = npc_id
+    npc['name'] = npc['name'].strip()
+    validate_campaign(candidate)
+    data['npcs'] = candidate['npcs']
+
+
+def delete_scene(data, scene_id):
+    if scene_record(data, scene_id) is None: raise ValueError('Сцена больше не существует')
+    data['scenes'] = [scene for scene in data['scenes'] if scene['id'] != scene_id]
+    if data['active_scene_id'] == scene_id: data['active_scene_id'] = ''
+
+
+def delete_npc(data, npc_id):
+    if npc_record(data, npc_id) is None: raise ValueError('NPC больше не существует')
+    data['npcs'] = [npc for npc in data['npcs'] if npc['id'] != npc_id]
+    for scene in data['scenes']: scene['npc_ids'] = [linked for linked in scene['npc_ids'] if linked != npc_id]
+    for enemy in data['enemies']:
+        if enemy.get('source_npc_id') == npc_id: enemy.pop('source_npc_id')
+
+
+def npc_battle_token(data, npc_id):
+    return next((f"enemy:{enemy['id']}" for enemy in data['enemies'] if enemy.get('source_npc_id') == npc_id), None)
+
+
+def add_npc_to_battle(data, npc_id):
+    npc = npc_record(data, npc_id)
+    if npc is None: raise ValueError('NPC больше не существует')
+    if npc_battle_token(data, npc_id): raise ValueError('Этот NPC уже среди участников боя')
+    validate_campaign(data)
+    enemy_id = data['next_enemy_id']
+    stats = {key:deepcopy(npc['combat'][key]) for key in ('hp','hp_max','armor','attack_damage','attack_type','heal_amount','initiative')}
+    stats['resists'] = {element:npc['combat']['resists'][element] for element in ELEMENTS}
+    fighter = dict(id=enemy_id, name=npc['name'], description=npc['description'] or npc['role'], side=npc['side'],
+                   source_npc_id=npc_id, effects=[], dots=[], **stats)
+    data['enemies'].append(fighter)
+    data['next_enemy_id'] += 1
+    if data['combat_active']: refresh_turn_order(data)
+    return f'enemy:{enemy_id}'
+
+
+def scene_player_text(data, scene_id):
+    scene = scene_record(data, scene_id)
+    if scene is None: raise ValueError('Сцена больше не существует')
+    lines = [f"# {scene['name']}"]
+    if scene['location']: lines.extend(['', f"Место: {scene['location']}"])
+    if scene['summary']: lines.extend(['', scene['summary']])
+    linked = [npc_record(data, npc_id) for npc_id in scene['npc_ids']]
+    if linked: lines.extend(['', '## Участники'])
+    for npc in linked:
+        lines.extend(['', f"### {npc['name']}"])
+        for field in ('role', 'description', 'public_notes'):
+            if npc[field]: lines.extend(['', npc[field]])
+    return '\n'.join(lines)
+
+
+def render_npc_roster(data, scene):
+    if not scene['npc_ids']:
+        st.caption('Добавь участников в настройках сцены. Карточки NPC создаются в соседнем разделе.')
+    with st.container(key='gm_roster'):
+        for npc_id in scene['npc_ids']:
+            npc = npc_record(data, npc_id)
+            c1, c2 = st.columns([3, 2])
+            c1.markdown(f"**{escape(npc['name'])}** · {escape(npc['role']) or npc['side']}")
+            existing = npc_battle_token(data, npc_id)
+            if c2.button('В бою' if existing else 'Добавить в бой', key=f'scene_battle_{scene["id"]}_{npc_id}', disabled=bool(existing), use_container_width=True):
+                add_npc_to_battle(data, npc_id)
+                log(f"NPC добавлен в бой: {npc['name']} ({npc['side']})")
+                persist_and_rerun(f"В бой: {npc['name']}")
+
+
+def render_scene_editor(data):
+    with st.expander('Новая сцена', expanded=not data['scenes']):
+        with st.form('gm_new_scene'):
+            name = st.text_input('Название сцены', key='gm_new_scene_name')
+            location = st.text_input('Место', key='gm_new_scene_location')
+            if st.form_submit_button('Создать сцену'):
+                try:
+                    scene = create_scene(data, name, location)
+                    st.session_state['_gm_select_scene'] = scene['id']
+                    persist_and_rerun(f"Создана сцена: {scene['name']}")
+                except ValueError as exc: st.error(str(exc))
+    if not data['scenes']: return
+    with st.container(key='gm_filter'):
+        search_column, select_column = st.columns([1, 2])
+        search = search_column.text_input('Найти сцену', key='gm_scene_search')
+        matches = [scene for scene in data['scenes'] if search.casefold() in (scene['name']+' '+scene['location']+' '+scene['summary']+' '+scene['gm_notes']).casefold()]
+        if not matches:
+            st.info('Подходящих сцен нет. Измени поиск.'); return
+        with select_column:
+            scene_id = remembered_select('Сцена', [scene['id'] for scene in matches], 'gm_scene_selected', default=data['active_scene_id'] or matches[0]['id'],
+                                         format_func=lambda ident: f"{'▶ ' if ident == data['active_scene_id'] else ''}{scene_record(data, ident)['name']} · {scene_record(data, ident)['status']}")
+    scene = scene_record(data, scene_id)
+    st.subheader(scene['name'])
+    st.caption(f"{scene['location'] or 'Место не задано'} · {scene['status']}")
+    if scene['summary']: st.write(scene['summary'])
+    with st.container(key='gm_scene_actions'):
+        b1, b2 = st.columns(2)
+        if b1.button('Сделать текущей', key=f'gm_scene_activate_{scene_id}', disabled=data['active_scene_id'] == scene_id, use_container_width=True):
+            activate_scene(data, scene_id)
+            st.session_state['_gm_select_scene'] = scene_id
+            persist_and_rerun(f"Текущая сцена: {scene['name']}")
+        if b2.button('Завершить сцену', key=f'gm_scene_finish_{scene_id}', disabled=scene['status'] == 'Завершена', use_container_width=True):
+            update_scene(data, scene_id, {'status':'Завершена'})
+            st.session_state['_gm_select_scene'] = scene_id
+            persist_and_rerun(f"Завершена сцена: {scene['name']}")
+    with st.expander('Содержание и участники', expanded=not scene['summary'] and not scene['gm_notes']):
+        with st.form(f'gm_scene_form_{scene_id}'):
+            name = st.text_input('Название', value=scene['name'])
+            location = st.text_input('Место сцены', value=scene['location'])
+            statuses = ['Подготовка', 'Идёт', 'На паузе', 'Завершена']
+            status = st.selectbox('Статус сцены', statuses, index=statuses.index(scene['status']))
+            npcs = st.multiselect('NPC в сцене', [npc['id'] for npc in data['npcs']], default=scene['npc_ids'], format_func=lambda ident:f"{npc_record(data, ident)['name']} · №{next(i+1 for i,npc in enumerate(data['npcs']) if npc['id']==ident)}", key=f'gm_scene_npcs_{scene_id}')
+            summary = st.text_area('Что видят игроки', value=scene['summary'], height=100)
+            notes = st.text_area('Заметки и секреты ведущего', value=scene['gm_notes'], height=130)
+            result = st.text_area('Итог сцены — для ведущего', value=scene['result'], height=80)
+            if st.form_submit_button('Сохранить сцену', type='primary'):
+                try:
+                    update_scene(data, scene_id, dict(name=name, location=location, status=status, npc_ids=npcs, summary=summary, gm_notes=notes, result=result))
+                    st.session_state['_gm_select_scene'] = scene_id
+                    persist_and_rerun(f"Сцена: {name.strip()}")
+                except ValueError as exc: st.error(str(exc))
+    render_npc_roster(data, scene)
+    if scene['gm_notes']:
+        with st.expander('Подсказки ведущему', expanded=True): st.write(scene['gm_notes'])
+    if scene['result']:
+        with st.expander('Итог сцены', expanded=False): st.write(scene['result'])
+    with st.expander('Текст для игроков', expanded=False):
+        public = scene_player_text(data, scene_id)
+        st.markdown(public)
+        st.download_button('Скачать текст для игроков', public, file_name='scene_for_players.md', mime='text/markdown', key=f'gm_export_scene_{scene_id}')
+    with st.expander('Удалить сцену', expanded=False):
+        confirm = st.checkbox('Подтверждаю удаление сцены', key=f'gm_scene_delete_confirm_{scene_id}')
+        if st.button('Удалить сцену', disabled=not confirm, key=f'gm_scene_delete_{scene_id}'):
+            delete_scene(data, scene_id); persist_and_rerun(f"Удалена сцена: {scene['name']}")
+
+
+def render_npc_editor(data):
+    with st.expander('Новый NPC', expanded=not data['npcs']):
+        with st.form('gm_new_npc'):
+            name = st.text_input('Имя NPC', key='gm_new_npc_name')
+            role = st.text_input('Роль / занятие, известное игрокам', key='gm_new_npc_role')
+            if st.form_submit_button('Создать NPC'):
+                try:
+                    npc = create_npc(data, name, role)
+                    st.session_state['_gm_select_npc'] = npc['id']
+                    persist_and_rerun(f"Создан NPC: {npc['name']}")
+                except ValueError as exc: st.error(str(exc))
+    if not data['npcs']: return
+    with st.container(key='gm_filter'):
+        search_column, select_column = st.columns([1, 2])
+        search = search_column.text_input('Найти NPC', key='gm_npc_search')
+        matches = [npc for npc in data['npcs'] if search.casefold() in ' '.join(npc[field] for field in ('name','role','location','description','public_notes','gm_notes')).casefold()]
+        if not matches:
+            st.info('Подходящих NPC нет. Измени поиск.'); return
+        with select_column:
+            npc_id = remembered_select('Карточка NPC', [npc['id'] for npc in matches], 'gm_npc_selected', default=matches[0]['id'], format_func=lambda ident:f"{npc_record(data, ident)['name']} · {npc_record(data, ident)['role'] or npc_record(data, ident)['side']} · №{next(i+1 for i,npc in enumerate(data['npcs']) if npc['id']==ident)}")
+    npc = npc_record(data, npc_id)
+    st.subheader(npc['name'])
+    st.caption(f"{npc['role'] or 'Роль не задана'} · {npc['side']} · {npc['location'] or 'Место не задано'}")
+    if npc['description']: st.write(npc['description'])
+    if npc['gm_notes']:
+        with st.expander('Секреты NPC', expanded=False): st.write(npc['gm_notes'])
+    with st.expander('Изменить карточку NPC', expanded=not npc['description'] and not npc['gm_notes']):
+        with st.form(f'gm_npc_form_{npc_id}'):
+            name = st.text_input('Имя', value=npc['name'])
+            c1, c2 = st.columns(2)
+            role = c1.text_input('Роль / занятие', value=npc['role'])
+            location = c2.text_input('Где находится', value=npc['location'])
+            sides = ['Враг', 'Союзник', 'Нейтральный']
+            side = st.selectbox('Сторона в бою', sides, index=sides.index(npc['side']))
+            description = st.text_area('Внешность и характер — для игроков', value=npc['description'], height=100)
+            public = st.text_area('Известное игрокам', value=npc['public_notes'], height=100)
+            private = st.text_area('Секреты и заметки ведущего', value=npc['gm_notes'], height=120)
+            with st.expander('Характеристики для добавления в бой', expanded=False):
+                c1, c2, c3 = st.columns(3)
+                hp = c1.number_input('HP NPC', min_value=0, value=npc['combat']['hp'])
+                maximum = c2.number_input('Максимум HP NPC', min_value=1, value=npc['combat']['hp_max'])
+                armor = c3.number_input('Броня NPC', min_value=0, value=npc['combat']['armor'])
+                c1, c2, c3 = st.columns(3)
+                attack = c1.number_input('Урон атаки NPC', min_value=0, value=npc['combat']['attack_damage'])
+                healing = c2.number_input('Лечение NPC', min_value=0, value=npc['combat']['heal_amount'])
+                initiative = c3.number_input('Инициатива NPC', min_value=0, value=npc['combat']['initiative'])
+                dtype = st.selectbox('Тип атаки NPC', DAMAGE_TYPES, index=DAMAGE_TYPES.index(npc['combat']['attack_type']))
+                resists = {}
+                cols = st.columns(2)
+                for i, element in enumerate(ELEMENTS):
+                    resists[element] = cols[i%2].number_input(f'Сопротивление: {element}', min_value=0, value=npc['combat']['resists'][element])
+            if st.form_submit_button('Сохранить NPC', type='primary'):
+                try:
+                    update_npc(data, npc_id, dict(name=name, role=role, location=location, side=side, description=description, public_notes=public, gm_notes=private,
+                                                combat=dict(hp=hp, hp_max=maximum, armor=armor, attack_damage=attack, heal_amount=healing, initiative=initiative, attack_type=dtype, resists=resists)))
+                    st.session_state['_gm_select_npc'] = npc_id
+                    persist_and_rerun(f"NPC: {name.strip()}")
+                except ValueError as exc: st.error(str(exc))
+    existing = npc_battle_token(data, npc_id)
+    if st.button('Уже среди участников боя' if existing else 'Добавить NPC в бой', key=f'gm_npc_battle_{npc_id}', disabled=bool(existing), use_container_width=True):
+        add_npc_to_battle(data, npc_id)
+        log(f"NPC добавлен в бой: {npc['name']} ({npc['side']})")
+        persist_and_rerun(f"В бой: {npc['name']}")
+    st.caption('В бой попадут HP и характеристики из сохранённой карточки NPC.')
+    linked = [scene['name'] for scene in data['scenes'] if npc_id in scene['npc_ids']]
+    if linked: st.caption('Сцены: ' + ', '.join(linked))
+    with st.expander('Удалить NPC', expanded=False):
+        confirm = st.checkbox('Подтверждаю удаление NPC', key=f'gm_npc_delete_confirm_{npc_id}')
+        if st.button('Удалить NPC', key=f'gm_npc_delete_{npc_id}', disabled=not confirm):
+            delete_npc(data, npc_id); persist_and_rerun(f"Удалён NPC: {npc['name']}")
+
+
+def render_gm(data):
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Стол ведущего</div>", unsafe_allow_html=True)
+    history = st.session_state.get('_undo_history', [])
+    if st.button('Отменить последнее действие', key='gm_undo', disabled=not history, help=history[-1]['label'] if history else 'Нет действий для отмены'):
+        undo_last_action()
+    prefs = st.session_state.setdefault('_battle_preferences', {})
+    if 'gm_section' not in st.session_state: st.session_state['gm_section'] = prefs.get('gm_section', 'Сцены')
+    section = st.radio('Раздел ведущего', ['Сцены','NPC','Записная книжка'], key='gm_section', horizontal=True, label_visibility='collapsed')
+    prefs['gm_section'] = section
+    if section == 'Сцены': render_scene_editor(data)
+    elif section == 'NPC': render_npc_editor(data)
+    else:
+        with st.form('gm_notebook'):
+            notes = st.text_area('Общие заметки ведущего', value=data['gm_notes'], height=260)
+            if st.form_submit_button('Сохранить заметки', type='primary'):
+                data['gm_notes'] = notes
+                persist_and_rerun('Заметки ведущего')
+        current = scene_record(data, data['active_scene_id'])
+        if current: st.caption('Текущая сцена: ' + current['name'])
+        st.download_button('Скачать записную книжку', data['gm_notes'], file_name='gm_notes.md', mime='text/markdown')
+
+
+def combat_side(data, token):
+    if token == 'player': return 'Героиня'
+    if token == 'ally': return 'Союзник'
+    return participant(data, token).get('side', 'Враг')
+
+
+def default_opponent(data, source_token):
+    tokens = [token for token, target in participants(data) if token != source_token and target[hp_fields(target)[0]] > 0]
+    if combat_side(data, source_token) == 'Враг': return 'player' if 'player' in tokens else tokens[0] if tokens else source_token
+    return next((token for token in tokens if combat_side(data, token) == 'Враг'), tokens[0] if tokens else source_token)
+
+
 # ===================== INIT =====================
 if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 13:
+if data.get("schema_version", 5) < 14:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1748,6 +2095,16 @@ st.session_state.setdefault("_undo_history", [])
 if "_next_battle_target" in st.session_state:
     st.session_state["battle_target"] = st.session_state.pop("_next_battle_target")
 
+for pending, selected, search in (("_gm_select_scene", "gm_scene_selected", "gm_scene_search"), ("_gm_select_npc", "gm_npc_selected", "gm_npc_search")):
+    if pending in st.session_state:
+        st.session_state[selected] = st.session_state.pop(pending)
+        st.session_state[search] = ""
+        # Перезагружаем значения формы после сохранения или смены статуса.
+        prefix = "gm_scene_npcs_" if selected == "gm_scene_selected" else ""
+        if prefix:
+            for widget_key in list(st.session_state):
+                if str(widget_key).startswith(prefix): del st.session_state[widget_key]
+
 # ===================== SIDEBAR =====================
 with st.sidebar:
     st.markdown("<div class='main-title' style='font-size:1.35rem'>✧ Калиста</div>", unsafe_allow_html=True)
@@ -1758,8 +2115,10 @@ with st.sidebar:
         st.markdown(f"**Раунд {data['round']}**")
         actor=get_current_actor(data)
         if actor: st.info(f"Ход: {actor['name']}")
+    active_scene = scene_record(data, data['active_scene_id'])
+    if active_scene: st.caption('Сцена: ' + active_scene['name'])
     st.divider()
-    page=st.radio("Меню",["Обзор","Бой","Экипировка","Характеристики","Инвентарь","Заклинания","Квесты","Кубики","Биография"],label_visibility="collapsed", key="page")
+    page=st.radio("Меню",["Обзор","Бой","Экипировка","Характеристики","Инвентарь","Заклинания","Квесты","Ведущий","Кубики","Биография"],label_visibility="collapsed", key="page")
     st.divider()
     if st.button("💾 Сохранить",use_container_width=True):
         if save(data): st.success("Сохранено")
@@ -1824,6 +2183,10 @@ elif page=="Бой":
     render_battle(data)
 
 # ===================== ЭКИПИРОВКА =====================
+elif page=="Ведущий":
+    with st.container(key="gm_table"):
+        render_gm(data)
+
 elif page=="Экипировка":
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Экипировка</div>", unsafe_allow_html=True)
     for slot,it in data["equipment"].items():
