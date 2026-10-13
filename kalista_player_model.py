@@ -2,7 +2,7 @@
 from copy import deepcopy
 from uuid import uuid4
 import math
-from kalista_progression import MAX_LEVEL
+from kalista_progression import MAX_LEVEL,advance_levels
 from urllib.parse import urlparse
 
 STATS=('Сила','Выносливость','Ловкость','Мудрость','Интеллект','Харизма')
@@ -101,7 +101,7 @@ def validate_player_sheet(ally):
     for key in ('Огонь','Земля','Вода','Воздух','Тьма','Свет'): number(p['resist_adjustments'].get(key),key)
 
 def recalc_player(ally):
-    p=ally['sheet_profile'];g=gear_totals(p);a=p['formula_adjustments']
+    p=ally['sheet_profile'];advance_levels(p);g=gear_totals(p);a=p['formula_adjustments']
     p['stats']={key:max(0,p['base_stats'][key]+g[key]+p['stat_adjustments'][key]) for key in STATS}
     ally['hp_max']=max(1,round(p['level']*20+p['stats']['Выносливость']*10+a['hp']))
     ally['hp']=min(ally['hp'],ally['hp_max'])

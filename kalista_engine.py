@@ -6,7 +6,8 @@ from copy import deepcopy
 from uuid import uuid4
 from datetime import datetime
 from kalista_player_model import ensure_player_sheet
-from kalista_progression import xp_needed,initialize_progress,MAX_LEVEL
+from kalista_progression import xp_needed,initialize_progress,MAX_LEVEL,advance_levels
+from kalista_rewards import begin_rewards,register_enemy,settle_rewards
 
 ELEMENTS = ["Огонь", "Земля", "Вода", "Воздух", "Тьма", "Свет"]
 
@@ -155,6 +156,7 @@ def recalc_equip(d):
 
 
 def recalc(d):
+    if d.get("xp_curve_version")==1:advance_levels(d)
     if "equipment" in d: recalc_equip(d)
     intel=total_stat(d,"Интеллект"); wis=total_stat(d,"Мудрость"); cha=total_stat(d,"Харизма")
     spi=total_stat(d,"Дух"); end=total_stat(d,"Выносливость"); agi=total_stat(d,"Ловкость")
@@ -1152,6 +1154,7 @@ def effective_crit_chance(data):
 
 
 def start_combat(data):
+    begin_rewards(data)
     for _,target in participants(data):
         target['eye_damage_boost']=False;target['defensive_stance']=False;target['eye_used']=False;target['movement_used']=False
     data["combat_active"] = True
@@ -1164,7 +1167,8 @@ def start_combat(data):
     return ["=== Бой начат. Раунд 1 ==="] + begin_actor_turn(data)
 
 
-def end_combat(data):
+def _end_combat(data):
+    reward=settle_rewards(data)
     data["combat_active"] = False
     for _,target in participants(data):
         target['eye_damage_boost']=False;target['defensive_stance']=False;target['movement_used']=False
@@ -1185,7 +1189,17 @@ def end_combat(data):
     data['turn_serial']=data.get('turn_serial',0)+1
     data['turn_actions']=[]
     invalidate_player_requests(data,'Бой завершён')
-    return "=== Бой окончен ==="
+    suffix=""
+    if reward:
+        suffix=" · Опыт: "+"; ".join(f"{h['name']} +{h['xp']} XP"+(f" · уровень {h['level_before']} → {h['level_after']} · +{h['free_points']} очков" if h['free_points'] else "") for h in reward['heroes'])
+    return "=== Бой окончен ==="+suffix
+
+
+def end_combat(data):
+    candidate=deepcopy(data)
+    message=_end_combat(candidate)
+    data.clear();data.update(candidate)
+    return message
 
 
 def spell_bonuses(data, spell):
@@ -1392,7 +1406,11 @@ def add_npc_to_battle(data, npc_id):
         if key in npc['combat']: stats[key]=npc['combat'][key]
     fighter = dict(id=enemy_id, name=npc['name'], description=npc['description'] or npc['role'], side=npc['side'],
                    source_npc_id=npc_id, effects=[], dots=[], **stats)
+    fighter['level']=npc['combat'].get('level')
+    fighter['is_boss']=npc['combat'].get('is_boss',False)
+    fighter['is_elite']=npc['combat'].get('is_elite',False)
     data['enemies'].append(fighter)
+    if data['combat_active']:register_enemy(data,fighter)
     data['next_enemy_id'] += 1
     if data['combat_active']: refresh_turn_order(data)
     return f'enemy:{enemy_id}'
@@ -1774,4 +1792,4 @@ def resolve_player_request(data,request_id,accept):
     return messages
 
 
-__all__ = ['xp_needed','MAX_LEVEL','visible_battle_participants','reach_label','ranged_miss_chance','kalista_dot_damage','distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']
+__all__ = ['register_enemy','xp_needed','MAX_LEVEL','visible_battle_participants','reach_label','ranged_miss_chance','kalista_dot_damage','distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']

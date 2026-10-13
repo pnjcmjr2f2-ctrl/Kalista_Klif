@@ -14,3 +14,12 @@ def initialize_progress(character):
         character['xp']=0;character['xp_known']=True;character['xp_curve_version']=1
     character['xp_goal']=xp_needed(character['level'])
     character['xp_to_next']=max(0,character['xp_goal']-character['xp'])
+
+def advance_levels(character):
+    before=character['level']
+    while character['level']<MAX_LEVEL and character['xp']>=xp_needed(character['level']):
+        character['xp']-=xp_needed(character['level']);character['level']+=1
+        character['free_points']=character.get('free_points',0)+4
+    if character['level']==MAX_LEVEL:character['xp']=0
+    character['xp_goal']=xp_needed(character['level']);character['xp_to_next']=max(0,character['xp_goal']-character['xp'])
+    return character['level']-before

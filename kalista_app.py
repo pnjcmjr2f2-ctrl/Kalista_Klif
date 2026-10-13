@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v29 · полный лист игрока
+Калиста Клиф — v30 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -435,6 +435,10 @@ def render_participant_editor(data, token):
     with st.expander("Изменить характеристики участника", expanded=False):
         with st.form(f"edit_participant_{token}"):
             name = st.text_input("Имя", value=target["name"])
+            if token.startswith("enemy:"):
+                reward_level=st.number_input("Уровень врага для опыта (0 — неизвестен)",min_value=0,value=int(target.get("level") or 0),disabled=token in ("player","ally"))
+                reward_boss=st.checkbox("Босс · опыт ×5",value=target.get("is_boss",False),disabled=token in ("player","ally"))
+                reward_elite=st.checkbox("Элитный · опыт ×2",value=target.get("is_elite",False),disabled=token in ("player","ally"))
             description = st.text_input("Кто это / заметка", value=target.get("description", ""))
             c1, c2 = st.columns(2)
             hp = c1.number_input("HP", min_value=0, value=target[hp_key])
@@ -455,7 +459,9 @@ def render_participant_editor(data, token):
             if st.form_submit_button("Сохранить участника"):
                 if not name.strip(): st.error("Укажи имя")
                 else:
-                    target["name"] = name.strip(); target[hp_key] = hp
+                    target["name"] = name.strip()
+                    if token.startswith("enemy:"):target.update(level=reward_level or None,is_boss=reward_boss,is_elite=reward_elite)
+                    target[hp_key] = hp
                     target["description"] = description.strip()
                     if token != "player": target[maximum_key] = maximum
                     if token == "player":
@@ -626,13 +632,15 @@ def render_new_enemy(data):
             level = c2.number_input("Уровень", min_value=1, max_value=60, value=10)
             size = st.selectbox("Размер", ["Мелкий", "Обычный", "Крупный", "Огромный"])
             elite = st.checkbox("Элитный")
+            boss = st.checkbox("Босс")
             if st.form_submit_button("Добавить врага"):
                 if not name.strip(): st.error("Укажи имя")
                 else:
                     eid = data["next_enemy_id"]
                     data["enemies"].append({"id": eid, "name": name.strip(), "level": level, "size": size,
-                                            "is_elite": elite, "effects": [], **gen_enemy(level, size, elite)})
+                                            "is_elite": elite, "is_boss":boss, "effects": [], **gen_enemy(level, size, elite)})
                     data["next_enemy_id"] += 1
+                    if data["combat_active"]:register_enemy(data,data["enemies"][-1])
                     if data["combat_active"]: refresh_turn_order(data)
                     st.session_state["_next_battle_target"] = f"enemy:{eid}"
                     log(f"Добавлен враг: {name.strip()}")
@@ -711,6 +719,13 @@ def render_movement(data,source_token,target_token,player_mode=False):
 
 
 def render_battle(data):
+    if not data['combat_active'] and data.get('last_battle_reward'):
+        reward=data['last_battle_reward']
+        with st.expander('Награда за последний бой',expanded=True):
+            for hero in reward['heroes']:
+                st.write(f"**{hero['name']}** · +{hero['xp']} XP · уровень {hero['level_after']}")
+                if hero['free_points']:st.caption(f"Свободные очки: +{hero['free_points']}")
+                for item in hero['details']:st.caption(f"{item['name']}: {item['xp']} XP · {item['reason']}")
     render_battle_header(data)
     render_turn_context(data)
     section = st.session_state["battle_section"]
@@ -1236,6 +1251,9 @@ def render_player():
     if section in ('Обзор','Бой'):render_combatant_card(data,'ally','Твой персонаж',active=True)
     else:st.caption(section+' · HP '+str(public['ally']['hp'])+'/'+str(public['ally']['hp_max']))
     if section=='Бой':
+        if not data['combat_active'] and data.get('last_battle_reward'):
+            hero=next((x for x in data['last_battle_reward']['heroes'] if x['token']=='ally'),None)
+            if hero:st.success(f"Награда за бой: +{hero['xp']} XP · уровень {hero['level_after']}"+(f" · +{hero['free_points']} свободных очков" if hero['free_points'] else ''))
         target=default_opponent(data,'ally')
         render_movement(data,'ally',target,player_mode=True)
         render_action_panel(data,'ally',target,player_mode=True)
