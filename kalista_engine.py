@@ -150,7 +150,7 @@ def recalc_equip(d):
     d["phys_attack"] = max(0, 5 + atk + d.get("attack_adjustment", 0))
     # базовые + экип
     base_r = {"Огонь":5,"Земля":5,"Вода":10,"Воздух":5,"Тьма":40,"Свет":15}
-    d["resists"] = {e: max(0, min(95, base_r[e] + resists[e]) + d.get("resist_adjustments", {}).get(e, 0)) for e in ELEMENTS}
+    d["resists"] = {e: max(0, min(95, base_r[e] + resists[e] + d.get("resist_adjustments", {}).get(e, 0))) for e in ELEMENTS}
 
 
 def recalc(d):
@@ -227,11 +227,20 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
         data["name"] = "Калиста Клиф" if data["name"].endswith("Клиф") else "Калиста"
+    if saved.get('schema_version',5)<18:
+        for _, target in participants(data):
+            target['element_defense_mode']='percent'
+            target['resists']={el:max(-100,min(95,v)) for el,v in target.get('resists',{}).items()}
+        for spell in data['spells']:
+            if spell['name']=='Покров тьмы':spell['action']='shield'
+            if spell['name']=='Теневой укол':
+                spell['cd_max']=2
+                spell['desc']='Чистый урон: игнорирует броню и сопротивления; щиты поглощают урон.'
     for actor in data.get("turn_order", []):
         if actor.get("kind") == "player": actor["name"] = data["name"]
     for _, target in participants(data):
@@ -405,7 +414,7 @@ def migrate(saved):
     for enemy in data["enemies"]:
         if "side" in enemy and enemy["side"] not in ("Враг", "Союзник", "Нейтральный"):
             raise ValueError("Неизвестная сторона участника боя")
-    data["schema_version"] = 17
+    data["schema_version"] = 18
     return data
 
 
@@ -418,7 +427,7 @@ def spell_raw(base, power, dual=False, soul=False):
 
 EFFECT_KINDS = {
     "note": "Статус / заметка", "shield": "Щит", "dot": "Периодический урон",
-    "hot": "Периодическое лечение", "armor": "Поправка к броне", "resist": "Поправка к сопротивлению",
+    "weakness": "Слабость", "fear": "Страх", "hot": "Периодическое лечение", "armor": "Поправка к броне", "resist": "Поправка к сопротивлению",
 }
 
 
@@ -478,7 +487,7 @@ def validate_effect(effect):
     duration = effect.get("duration")
     if duration is not None and (isinstance(duration, bool) or not isinstance(duration, int) or duration < 1):
         raise ValueError("Длительность должна быть положительной или бессрочной")
-    if kind in ("dot", "hot") and duration is None:
+    if kind in ("dot", "hot", "weakness", "fear") and duration is None:
         raise ValueError("Периодическому эффекту нужно количество срабатываний")
     if kind in ("dot", "resist") and effect.get("element", "Огонь") not in DAMAGE_TYPES:
         raise ValueError("Неизвестный тип урона или сопротивления")
@@ -527,8 +536,8 @@ def effective_defense(target, damage_type):
     # Сохраняем прежнее числовое правило Тени: +20 пунктов, с пределом 95.
     if target.get("ten_resist_boost", 0) > 0:
         resist = min(95, resist + 20)
-    return max(0, resist + sum(effect["value"] for effect in target.get("effects", [])
-                              if effect["kind"] == "resist" and effect["element"] == damage_type))
+    return max(-100,min(95,resist + sum(effect["value"] for effect in target.get("effects", [])
+                              if effect["kind"] == "resist" and effect["element"] == damage_type)))
 
 
 def damage_preview(target, amount, damage_type="Физический", final=False,
@@ -537,13 +546,10 @@ def damage_preview(target, amount, damage_type="Физический", final=Fal
     if not isinstance(defense_factor, (int, float)) or not math.isfinite(defense_factor) or not 0 <= defense_factor <= 1:
         raise ValueError("Неверная доля сопротивления")
     defense = effective_defense(target, damage_type) * defense_factor
-    if not final and damage_type != "Физический" and target.get("element_defense_mode") == "percent":
-        resistance = target.get("resists", {}).get(damage_type, 0) + sum(
-            effect["value"] for effect in target.get("effects", [])
-            if effect["kind"] == "resist" and effect["element"] == damage_type)
-        incoming = max(0, round(amount * (1 - min(95, max(-100, resistance)) * defense_factor / 100)))
+    if not final and damage_type != "Физический":
+        incoming=max(0,round(amount*(1-defense/100)))
     else:
-        incoming = amount if final else real_dmg(amount, defense)
+        incoming=amount if final else real_dmg(amount,defense)
     racial_reduction = 0
     if not final and damage_type == "Тьма" and "dark_resist" in target.get("passives", {}):
         protected = round(incoming * .9)
@@ -630,6 +636,12 @@ def tick_periodic(target):
     """Каждый периодический эффект тикает один раз в конце хода цели."""
     messages = []
     for effect in list(target.get("effects", [])):
+        if effect['kind'] in ('weakness','fear'):
+            effect['duration']-=1
+            if effect['duration']<=0:
+                target['effects']=[item for item in target['effects'] if item['id']!=effect['id']]
+                messages.append(f"«{effect['name']}» завершён: {target['name']}")
+            continue
         if effect["kind"] not in ("dot", "hot"):
             continue
         if effect["kind"] == "dot":
@@ -649,7 +661,7 @@ def tick_round_effects(target, completed_round):
     messages = []
     kept = []
     for effect in target.get("effects", []):
-        if (effect["kind"] not in ("dot", "hot") and effect["duration"] is not None
+        if (effect["kind"] not in ("dot", "hot", "weakness", "fear") and effect["duration"] is not None
                 and effect.get("applied_round", 0) < completed_round):
             effect["duration"] -= 1
         if effect["duration"] is None or effect["duration"] > 0:
@@ -700,19 +712,21 @@ def begin_actor_turn(data):
         combatant = actor_target(data, actor)
         for ability in (combatant or {}).get("actions", []):
             ability["cooldown_left"] = max(0, ability.get("cooldown_left", 0) - 1)
-    if not actor or actor["kind"] != "player":
-        return []
-    data["player_turns_started"] = data.get("player_turns_started", 0) + 1
-    messages = []
-    if data.get("ten_invis"):
-        data["ten_invis_turn_starts_left"] -= 1
-        if data["ten_invis_turn_starts_left"] == 0:
-            data["ten_invis"] = False
-            messages.append("Невидимость спала: начало 3-го хода Калисты после активации")
-    if data.get("ten_resist_boost", 0) > 0:
-        data["ten_resist_boost"] -= 1
-        if data["ten_resist_boost"] == 0:
-            messages.append("Сопротивления Тени истекли: начало 3-го хода Калисты после активации")
+    messages=[]
+    if actor and actor['kind']=='player':
+        data['player_turns_started']=data.get('player_turns_started',0)+1
+        if data.get('ten_invis'):
+            data['ten_invis_turn_starts_left']-=1
+            if data['ten_invis_turn_starts_left']==0:
+                data['ten_invis']=False
+                messages.append('Невидимость спала: начало 3-го хода Калисты после активации')
+        if data.get('ten_resist_boost',0)>0:
+            data['ten_resist_boost']-=1
+            if data['ten_resist_boost']==0:messages.append('Сопротивления Тени истекли: начало 3-го хода Калисты после активации')
+    if actor and any(e['kind']=='fear' for e in (combatant or {}).get('effects',[])):
+        message=f"{combatant['name']}: пропускает ход — Страх"
+        record_turn_action(data,actor_token(actor),'Страх',combatant['name'],message,counts=False)
+        return messages+[message]+advance_turn(data)
     return messages
 
 
@@ -758,6 +772,63 @@ def spell_action(spell):
     return spell.get("action", "damage")
 
 
+def shadow_shield_amount(data):
+    return round(total_stat(data,'Интеллект')*(1+data.get('spell_power',0)))
+
+
+def outgoing_damage(source,amount,damage_type):
+    return round(amount*.65) if damage_type=='Физический' and any(e['kind']=='weakness' for e in source.get('effects',[])) else amount
+
+
+def roll_spell_effects(data,spell,target):
+    if spell_action(spell)!='damage' or target[hp_fields(target)[0]]<=0:return []
+    rolls=[]
+    if 'Огонь' in spell['school']:
+        rolls.append(('dot','Горение',18,'Огонь',3,.5,'burn'))
+    if 'Тьма' in spell['school']:
+        rolls.extend([('dot','Проклятие',10,'Тьма',3,.5,'curse'),('weakness','Слабость',35,'Тьма',2,.35,'weakness')])
+    if spell['name'] in ('Разряд бездны','Пламя души'):
+        chance=.5*(1-min(.9,max(0,target.get('control_resist',0))))
+        rolls.append(('fear','Страх',0,'Тьма',2,chance,'fear'))
+    messages=[]
+    for kind,name,value,element,duration,chance,key in rolls:
+        roll=random.random()
+        if roll<chance:
+            # All Kalista spells refresh this status rather than stacking it.
+            target['effects']=[e for e in target.get('effects',[]) if not (e['kind']==kind and e['name']==name and (e.get('source','').startswith('spell:') or e.get('source','').startswith('kalista:')))]
+            add_effect(target,dict(kind=kind,name=name,value=value,element=element,duration=duration,source='kalista:'+key),data['round'] if data['combat_active'] else 0)
+            messages.append(f'{name}: наложено на {duration} хода цели (бросок {roll*100:.1f}% < {chance*100:.1f}%)')
+        else:messages.append(f'{name}: не наложено (бросок {roll*100:.1f}% ≥ {chance*100:.1f}%)')
+    return messages
+
+
+def spell_damage_preview(data,spell,target,raw,final_damage=None):
+    if final_damage is not None:return damage_preview(target,final_damage,final=True)
+    if spell['name']=='Теневой укол':return damage_preview(target,raw,final=True)
+    schools=['Огонь','Тьма'] if spell['school']=='Огонь+Тьма' else ['Огонь' if 'Огонь' in spell['school'] else 'Тьма']
+    incoming=0.0
+    racial_reduction=0.0
+    for element in schools:
+        part=raw/len(schools)
+        defense=effective_defense(target,element)
+        if element=='Огонь' and data.get('pepel_empower'):defense*=.7
+        reduced=max(0,part*(1-defense/100))
+        if element=='Тьма' and 'dark_resist' in target.get('passives',{}):
+            racial_reduction+=reduced*.1;reduced*=.9
+        incoming+=reduced
+    result=damage_preview(target,round(incoming),final=True)
+    result['racial_reduction']=round(racial_reduction)
+    result['components']=[{'element':el,'share':1/len(schools)} for el in schools]
+    return result
+
+
+def spell_damage_apply(data,spell,target,raw,final_damage=None):
+    preview=spell_damage_preview(data,spell,target,raw,final_damage)
+    result=apply_damage(target,preview['incoming'],final=True)
+    result['racial_reduction']=preview['racial_reduction']
+    return result
+
+
 def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount=None):
     """Проверяем всё до расходования ресурсов. Решения о целях/крите принимает UI."""
     check_action_limit(data, "player")
@@ -769,12 +840,12 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
         raise ValueError("Не хватает маны")
     if spell.get("cd_left", 0) > 0:
         raise ValueError("Заклинание ещё на перезарядке")
-    if action in ("heal", "shield") or (action == "damage" and (spell["base"] > 0 or spell.get("dot"))):
+    if action in ("heal", "shield", "damage"):
         if target is None:
             raise ValueError("Выбери цель")
     amount = spell["base"]
     if action == "shield":
-        amount = spell.get("effect_value", 0) if shield_amount is None else shield_amount
+        amount = shadow_shield_amount(data) if spell["name"]=="Покров тьмы" else (spell.get("effect_value", 0) if shield_amount is None else shield_amount)
         nonnegative_int(amount, "Сила щита")
         if amount == 0:
             raise ValueError("Укажи силу щита: в исходных правилах её значение не задано")
@@ -785,13 +856,6 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
             raise ValueError("Укажи величину лечения выше 0")
     if final_damage is not None:
         nonnegative_int(final_damage, "Итоговый урон")
-    dot_effect = None
-    if action == "damage" and spell.get("dot") and target is not None:
-        dot = spell["dot"]
-        dot_effect = {"kind": "dot", "name": dot["name"], "value": dot["damage"],
-                      "element": dot.get("element", "Огонь"), "duration": dot["duration"],
-                      "source": f"spell:{spell['id']}"}
-        validate_effect(dot_effect)
     effect = None
     if action in ("heal", "shield", "note"):
         effect = {"kind": "shield" if action == "shield" else "note", "name": spell["name"],
@@ -803,12 +867,9 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
     raw = spell_raw(amount, data.get("spell_power", 0), dual, soul) if action == "damage" else amount
     if crit and action == "damage":
         raw = round(raw * 1.5)
-    dtype = "Огонь" if "Огонь" in spell["school"] else "Тьма"
-    empowered = bool(data.get("pepel_empower") and dtype == "Огонь" and action == "damage" and raw > 0)
-    # До изменения данных проверяем расчёт и цель.
-    if target is not None and action == "damage" and raw > 0:
-        damage_preview(target, raw if final_damage is None else final_damage, dtype,
-                       final=final_damage is not None, defense_factor=0.7 if empowered else 1.0)
+    empowered=bool(data.get('pepel_empower') and 'Огонь' in spell['school'] and action=='damage' and raw>0 and spell['name']!='Теневой укол')
+    if target is not None and action=='damage' and raw>0:
+        spell_damage_preview(data,spell,target,raw,final_damage)
     observe_mana_reserve(data)
     data["mana_current"] -= spell["mana"]
     data["last_school"] = spell["school"]
@@ -822,17 +883,11 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
     messages = [f"«{spell['name']}» (−{spell['mana']} MP)" + (" · КРИТ" if crit and action == "damage" else "")]
     if target is not None and action == "damage":
         if raw > 0:
-            result = apply_damage(target, raw if final_damage is None else final_damage, dtype,
-                                  final=final_damage is not None, defense_factor=0.7 if empowered else 1.0)
-            messages.append(damage_message(target["name"], result))
-            if final_damage is not None:
-                messages.append("Урон назначен ведущим; щит учтён")
-            if empowered:
-                data["pepel_empower"] = False
-        if dot_effect is not None:
-            # В прежней версии повторные касты складывали DoT. Сохраняем это правило.
-            add_effect(target, dot_effect, data["round"] if data["combat_active"] else 0, stack=True)
-            messages.append(f"+ «{dot_effect['name']}» ({dot_effect['duration']} срабатывания)")
+            result=spell_damage_apply(data,spell,target,raw,final_damage)
+            messages.append(damage_message(target['name'],result))
+            if final_damage is not None:messages.append('Урон назначен ведущим; щит учтён')
+            if empowered:data['pepel_empower']=False
+        messages.extend(roll_spell_effects(data,spell,target))
     elif action == "heal":
         result = apply_healing(target, amount)
         messages.append(f"{target['name']}: +{result['restored']} HP (избыток {result['excess']})")
@@ -1361,8 +1416,9 @@ def action_amount(source, action, critical=False):
 
 
 def check_action_limit(data, source_token, reaction=False):
-    if not data.get('combat_active') or reaction: return
     source = participant(data, source_token)
+    if any(e['kind']=='fear' for e in source.get('effects',[])):raise ValueError('Страх: персонаж не может действовать до окончания эффекта')
+    if not data.get('combat_active') or reaction: return
     limit = source.get('action_limit', 0)
     count = sum(entry['source'] == source_token and entry.get('counts', True) for entry in data.get('turn_actions', []))
     if limit and count >= limit: raise ValueError('Лимит действий этого хода исчерпан')
@@ -1389,7 +1445,7 @@ def preview_action(data, source_token, action, token, critical=False, manual_amo
         copy=deepcopy(target);loss=absorbed=0
         if token=='player' and data.get('ten_invis'): values.append((0,0));continue
         for hit in range(action['hits']):
-            result=apply_damage(copy,amount+bonus,action['damage_type'],defense_factor=action_damage_factor(copy,action))
+            result=apply_damage(copy,outgoing_damage(participant(data,source_token),amount+bonus,action['damage_type']),action['damage_type'],defense_factor=action_damage_factor(copy,action))
             loss+=result['hp_loss'];absorbed+=result['absorbed']
         values.append((loss,absorbed))
     return dict(hp_min=values[0][0],hp_max=values[1][0],shield=values[0][1])
@@ -1422,6 +1478,10 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
         rolls=[random.randint(1,action['extra_dice_sides']) for _ in range(action['extra_dice_count'])]
         amount+=sum(rolls)
         messages.append(f"Дополнительный бросок: {rolls} = +{sum(rolls)}")
+    if action['kind']=='damage':
+        weakened=outgoing_damage(source,amount,action['damage_type'])
+        if weakened!=amount:messages.append(f'Слабость: физический урон {amount} → {weakened} (−35%)')
+        amount=weakened
     for token, target in targets:
         if action['kind'] == 'damage':
             if target[hp_fields(target)[0]] <= 0: raise ValueError('У цели 0 HP')
@@ -1461,7 +1521,7 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
 def effect_lifetime(effect):
     duration=effect.get('duration')
     if duration is None: return effect['name']+' · бессрочно'
-    when='концов хода цели' if effect['kind'] in ('dot','hot') else 'полных раундов'
+    when='концов хода цели' if effect['kind'] in ('dot','hot','weakness','fear') else 'полных раундов'
     return f"{effect['name']} · ещё {duration} {when}"
 
 
@@ -1506,4 +1566,4 @@ def resolve_player_request(data,request_id,accept):
     return messages
 
 
-__all__ = ['invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']
+__all__ = ['shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v18 · полный лист игрока
+Калиста Клиф — v19 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -295,8 +295,10 @@ def render_selected_spell(data, target):
     if action == "damage": st.caption(f"Шанс крита: {effective_crit_chance(data)*100:.1f}%")
     shield_amount = None
     if action == "shield":
-        shield_amount = st.number_input("Сила щита", min_value=0, value=spell.get("effect_value", 0), key=f"cast_shield_{sid}")
-        if not shield_amount: st.caption("Сила щита в правилах не задана — укажи её перед применением.")
+        if spell['name']=='Покров тьмы':
+            shield_amount=shadow_shield_amount(data)
+            st.caption(f'Щит = Интеллект × (1 + сила заклинаний) = {shield_amount}')
+        else:shield_amount = st.number_input("Сила щита", min_value=0, value=spell.get("effect_value", 0), key=f"cast_shield_{sid}")
     crit_mode = "Без крита"
     override = False
     final_damage = 0
@@ -309,14 +311,14 @@ def render_selected_spell(data, target):
         dtype = "Огонь" if "Огонь" in spell["school"] else "Тьма"
         preview_raw = round(raw * 1.5) if crit_mode == "Крит ведущего" else raw
         if raw > 0:
-            preview = damage_preview(target, final_damage if override else preview_raw, dtype, final=override,
-                                     defense_factor=0.7 if data.get("pepel_empower") and dtype == "Огонь" else 1.0)
+            preview = spell_damage_preview(data,spell,target,preview_raw,final_damage if override else None)
             st.info(damage_message(target["name"], preview) + (" · до броска крита" if crit_mode == "Бросок" and not override else ""))
             if target is data['ally'] or target is data:
                 st.warning('Выбрана дружественная цель: заклинание нанесёт ей урон.')
-        if spell.get("dot"):
-            dot = spell["dot"]
-            st.caption(f"+ {dot['name']}: {dot['damage']} {dot.get('element', 'Огонь')} × {dot['duration']} срабатывания")
+        if 'Огонь' in spell['school']:st.caption('Горение: шанс 50% · 18 Огнём × 3 хода цели')
+        if 'Тьма' in spell['school']:st.caption('Проклятие: шанс 50% · 10 Тьмой × 3 хода; слабость: шанс 35% · −35% физического урона на 2 хода')
+        if spell['name'] in ('Разряд бездны','Пламя души'):st.caption('Страх: шанс 50% × (1 − сопротивление контролю) · пропуск 2 ходов цели')
+        if spell['school']=='Огонь+Тьма':st.caption('Прямой урон: 50% Огнём и 50% Тьмой; эффекты проверяются независимо.')
     elif action == "heal":
         hp_key, maximum_key = hp_fields(target)
         st.info(f"{target['name']}: восстановится {min(raw, max(0, target[maximum_key] - target[hp_key]))} HP")
@@ -426,7 +428,7 @@ def render_participant_editor(data, token):
             resists = {}
             cols = st.columns(2)
             for i, element in enumerate(ELEMENTS):
-                resists[element] = cols[i % 2].number_input(element, min_value=-100 if target.get("element_defense_mode") == "percent" else 0, max_value=95 if target.get("element_defense_mode") == "percent" else None, value=target.get("resists", {}).get(element, 0))
+                resists[element] = cols[i % 2].number_input(element, min_value=-100, max_value=95, value=target.get("resists", {}).get(element, 0))
             if token == "player": st.caption("Максимум HP Калисты рассчитывается из уровня и характеристик.")
             if st.form_submit_button("Сохранить участника"):
                 if not name.strip(): st.error("Укажи имя")
@@ -861,7 +863,7 @@ def render_npc_editor(data):
                 resists = {}
                 cols = st.columns(2)
                 for i, element in enumerate(ELEMENTS):
-                    resists[element] = cols[i%2].number_input(f'Сопротивление: {element}', min_value=0, value=npc['combat']['resists'][element])
+                    resists[element] = cols[i%2].number_input(f'Сопротивление: {element} (%)', min_value=0, max_value=95, value=npc['combat']['resists'][element])
             if st.form_submit_button('Сохранить NPC', type='primary'):
                 try:
                     update_npc(data, npc_id, dict(name=name, role=role, location=location, side=side, description=description, public_notes=public, gm_notes=private,
@@ -1153,7 +1155,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 17:
+if data.get("schema_version", 5) < 18:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1255,8 +1257,8 @@ if page=="Обзор":
             m3.metric("Иниц.",data["initiative"])
             m4.metric("Очки",data["free_points"])
     st.markdown("<div class='section-h'>Сопротивления</div>", unsafe_allow_html=True)
-    render_stat_grid([(e,f"{data['resists'].get(e,0)} → {absorb(data['resists'].get(e,0))*100:.1f}%") for e in ELEMENTS], elements=True)
-    st.caption("Число защиты → снижение урона. Дополнительная расовая защита от Тьмы применяется после него.")
+    render_stat_grid([(e,f"{effective_defense(data,e):g}%") for e in ELEMENTS], elements=True)
+    st.caption("Сопротивления в процентах, максимум 95%. Расовая защита от Тьмы дополнительно снижает оставшийся урон на 10%.")
     st.markdown("<div class='section-h'>Характеристики</div>", unsafe_allow_html=True)
     render_stat_grid([(n,total_stat(data,n)) for n in ["Сила","Выносливость","Ловкость","Мудрость","Интеллект","Харизма","Дух"]])
     st.markdown("<div class='section-h'>Опыт</div>", unsafe_allow_html=True)
@@ -1294,13 +1296,13 @@ elif page=="Экипировка":
             it["wis"]=c[3].number_input("Мудр",0,value=int(it.get("wis",0)),key=f"w{slot}")
             c2=st.columns(4)
             it["spi"]=c2[0].number_input("Дух",0,value=int(it.get("spi",0)),key=f"s{slot}")
-            it["fire"]=c2[1].number_input("Огонь",0,value=int(it.get("fire",0)),key=f"f{slot}")
-            it["dark"]=c2[2].number_input("Тьма",0,value=int(it.get("dark",0)),key=f"d{slot}")
-            it["earth"]=c2[3].number_input("Земля",0,value=int(it.get("earth",0)),key=f"e{slot}")
+            it["fire"]=c2[1].number_input("Огонь (%)",0,value=int(it.get("fire",0)),key=f"f{slot}")
+            it["dark"]=c2[2].number_input("Тьма (%)",0,value=int(it.get("dark",0)),key=f"d{slot}")
+            it["earth"]=c2[3].number_input("Земля (%)",0,value=int(it.get("earth",0)),key=f"e{slot}")
             c3=st.columns(3)
-            it["water"]=c3[0].number_input("Вода",0,value=int(it.get("water",0)),key=f"wa{slot}")
-            it["air"]=c3[1].number_input("Воздух",0,value=int(it.get("air",0)),key=f"ai{slot}")
-            it["light"]=c3[2].number_input("Свет",0,value=int(it.get("light",0)),key=f"l{slot}")
+            it["water"]=c3[0].number_input("Вода (%)",0,value=int(it.get("water",0)),key=f"wa{slot}")
+            it["air"]=c3[1].number_input("Воздух (%)",0,value=int(it.get("air",0)),key=f"ai{slot}")
+            it["light"]=c3[2].number_input("Свет (%)",0,value=int(it.get("light",0)),key=f"l{slot}")
     if st.button("🔄 Пересчитать",type="primary"):
         recalc_equip(data); recalc(data); st.success(f"Броня {data['armor']}"); persist_and_rerun()
 
@@ -1333,7 +1335,7 @@ elif page=="Характеристики":
     with st.expander("Сопротивления стихиям"):
         rc = st.columns(6)
         for i, e in enumerate(ELEMENTS):
-            rc[i].metric(e, data["resists"].get(e, 0))
+            rc[i].metric(e, str(effective_defense(data,e))+"%")
 
     with st.expander("Пассивки (расовые и классовые)"):
         for k, p in data["passives"].items():
@@ -1416,28 +1418,14 @@ elif page=="Заклинания":
             actions = ["damage", "heal", "shield", "note"]
             sp["action"] = st.selectbox("Действие", actions, index=actions.index(spell_action(sp)),
                                         format_func=lambda v: {"damage": "Урон", "heal": "Лечение", "shield": "Щит", "note": "Статус / заметка"}[v], key=f"sa{sp['id']}")
-            if sp["action"] in ("heal", "shield"):
-                sp["effect_value"] = st.number_input("Лечение / сила щита (без множителей)", min_value=0,
-                                                      value=sp.get("effect_value", 0), key=f"sev{sp['id']}")
+            if sp['name']=='Покров тьмы':st.caption(f'Расчётный щит: {shadow_shield_amount(data)} · Интеллект × (1 + сила заклинаний)')
+            elif sp["action"] in ("heal", "shield"):
+                sp["effect_value"] = st.number_input("Лечение / сила щита (без множителей)", min_value=0,value=sp.get("effect_value", 0), key=f"sev{sp['id']}")
             if sp["action"] in ("shield", "note"):
-                sp["effect_duration"] = st.number_input("Полных раундов (0 — бессрочно)", min_value=0,
-                                                         value=sp.get("effect_duration", 0), key=f"sed{sp['id']}")
-            if sp["action"] == "damage":
-                with st.form(f"dot_settings_{sp['id']}"):
-                    existing = sp.get("dot") or {}
-                    enabled = st.checkbox("Периодический урон", value=bool(existing))
-                    dot_name = st.text_input("Название эффекта", value=existing.get("name", "Горение"))
-                    dot_amount = st.number_input("Урон за срабатывание", min_value=0, value=existing.get("damage", 0))
-                    dot_duration = st.number_input("Срабатываний", min_value=1, value=max(1, existing.get("duration", 3)))
-                    dot_element = st.selectbox("Тип урона эффекта", DAMAGE_TYPES,
-                                               index=DAMAGE_TYPES.index(existing.get("element", "Огонь")))
-                    if st.form_submit_button("Сохранить периодический эффект"):
-                        if enabled and not dot_name.strip():
-                            st.error("Укажи название эффекта")
-                        else:
-                            sp["dot"] = {"name": dot_name.strip(), "damage": dot_amount,
-                                         "duration": dot_duration, "element": dot_element} if enabled else None
-                            persist_and_rerun()
+                sp["effect_duration"] = st.number_input("Полных раундов (0 — бессрочно)", min_value=0,value=sp.get("effect_duration", 0), key=f"sed{sp['id']}")
+            if sp['action']=='damage':
+                st.caption('Эффекты школы: горение 50% (18 × 3); проклятие 50% (10 × 3); слабость 35% (−35%, 2 хода). Повтор обновляет длительность.')
+                if sp['name'] in ('Разряд бездны','Пламя души'):st.caption('Страх: 50% × (1 − сопротивление контролю), пропуск 2 ходов.')
 
             gives_opts = [None, "pepel", "ten", "both"]
             cur_g = sp.get("gives")
