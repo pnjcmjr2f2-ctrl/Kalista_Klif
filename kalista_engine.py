@@ -5,6 +5,7 @@ import json
 from copy import deepcopy
 from uuid import uuid4
 from datetime import datetime
+from kalista_player_model import ensure_player_sheet
 
 ELEMENTS = ["Огонь", "Земля", "Вода", "Воздух", "Тьма", "Свет"]
 
@@ -226,7 +227,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -243,9 +244,10 @@ def migrate(saved):
             if any(not isinstance(v, (int,float)) or isinstance(v,bool) or not math.isfinite(v) or not -100 <= v <= 95 for v in target['resists'].values()):
                 raise ValueError('Сопротивления в процентах должны быть от −100 до 95')
         if 'sheet_profile' in target:
+            ensure_player_sheet(target)
             profile = target['sheet_profile']
             template = imported_friend()['sheet_profile']
-            validate_tree(profile, template)
+            validate_tree(profile, {key:value for key,value in template.items() if key not in ('equipment','inventory','formula_adjustments','stat_adjustments','resist_adjustments','quests')})
             if not template.keys() <= profile.keys(): raise ValueError('Неполный лист персонажа друга')
             for field in ('attack','critical_damage','critical_chance','level','free_points'):
                 if profile[field] < 0: raise ValueError('Боевые параметры листа не могут быть отрицательными')
@@ -403,7 +405,7 @@ def migrate(saved):
     for enemy in data["enemies"]:
         if "side" in enemy and enemy["side"] not in ("Враг", "Союзник", "Нейтральный"):
             raise ValueError("Неизвестная сторона участника боя")
-    data["schema_version"] = 16
+    data["schema_version"] = 17
     return data
 
 
@@ -1109,6 +1111,7 @@ def imported_friend():
     profile['source'] += ' + Шеогарат — Long Story Short.json'
     profile['equipment_note'] = reference['texts']['equipment']
     ally['actions'] = friend_actions()
+    ensure_player_sheet(ally)
     return ally
 
 

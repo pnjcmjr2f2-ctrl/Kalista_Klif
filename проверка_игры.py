@@ -82,6 +82,7 @@ with TemporaryDirectory() as directory:
  # Unauthenticated and player sessions never render GM controls / exports / secrets.
  anon=AppTest.from_file(str(p),default_timeout=30);anon.secrets['access']={'gm_password':'test-gm','player_password':'test-player'};anon.run();assert not anon.exception and not any(b.label=='💾 Сохранить' for b in anon.button)
  player=AppTest.from_file(str(p),default_timeout=30);player.secrets['access']={'gm_password':'test-gm','player_password':'test-player'};player.session_state['_role']='player';player.run();assert not player.exception
+ player.selectbox(key='player_section').set_value('Бой').run();assert not player.exception
  assert not player.get('file_uploader') and not player.get('download_button') and not any(r.key=='page' for r in player.radio)
  assert 'SECRET' not in str(player)
  aid=next(a['id'] for a in state['ally']['actions'] if a['name']=='Удар оружием')

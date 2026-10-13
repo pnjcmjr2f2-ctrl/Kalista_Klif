@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v17 · боевой стол и отряд
+Калиста Клиф — v18 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -22,6 +22,7 @@ import time
 from kalista_storage import read_state, write_state, StaleState
 from kalista_engine import *
 from kalista_theme import THEME
+from kalista_player_ui import render_section as render_player_sheet_section, SECTIONS as PLAYER_SECTIONS
 
 SAVE_FILE = Path(__file__).parent / "kalista_save.json"
 PORTRAIT_FILE = Path(__file__).parent / "assets" / "kalista-portrait.png"
@@ -497,7 +498,11 @@ def render_party(data):
         render_combatant_card(data, 'ally', 'Текущий союзник')
         return
     render_combatant_card(data, 'ally', 'Персонаж игрока', active=True)
-    view = st.radio('Раздел персонажа', ['Лист', 'Снаряжение', 'Правка'], horizontal=True, key='friend_view', label_visibility='collapsed')
+    view = st.radio('Раздел персонажа', ['Лист', 'Снаряжение', 'Правка','Полный лист'], horizontal=True, key='friend_view', label_visibility='collapsed')
+    if view=='Полный лист':
+        selected=st.selectbox('Раздел листа',[s for s in PLAYER_SECTIONS if s not in ('Бой','Сцена')],key='party_sheet_section')
+        render_player_sheet_section(selected,data,SAVE_FILE.parent)
+        return
     if view == 'Лист':
         render_stat_grid(profile['stats'].items())
         st.markdown("<div class='section-h'>Боевые характеристики</div>", unsafe_allow_html=True)
@@ -520,7 +525,7 @@ def render_party(data):
         scene = scene_record(data, data['active_scene_id'])
         if scene:
             with st.expander('Текущая сцена', expanded=True): st.markdown(scene_player_text(data, scene['id']))
-        st.caption('Экран игрока внутри общей программы. Доступ с отдельного устройства будет следующим этапом.')
+        st.caption('Полный лист доступен игроку с его отдельным ключом входа.')
     elif view == 'Снаряжение':
         for item in profile['equipment']:
             with st.expander(item['slot']+' · '+item['name'], expanded=True):
@@ -531,9 +536,9 @@ def render_party(data):
             st.write(profile['equipment_note'])
         if profile.get('reference'):
             st.markdown("<div class='section-h'>Бездонная сумка</div>", unsafe_allow_html=True)
-            for item in profile['reference']['resources']: st.write(f"{item['name']} × {item['qty']}")
-            coins = profile['reference']['coins']
-            st.caption(f"Монеты из JSON: {coins['gp']} золотых · {coins['sp']} серебряных · {coins['cp']} медных")
+            for item in profile['inventory']: st.write(f"{item['name']} × {item['qty']}")
+            coins = profile['currency']
+            st.caption(f"Монеты: {coins['gold']} золотых · {coins['silver']} серебряных · {coins['copper']} медных")
     else:
         with st.form('friend_identity'):
             name = st.text_input('Имя персонажа', ally['name'])
@@ -1077,8 +1082,8 @@ def render_request_inbox():
     latest,revision=read_state(SAVE_FILE)
     if latest is None: return
     pending=[r for r in latest.get('player_requests',[]) if r['status']=='pending']
-    if not pending: return
-    st.info(f'Предложения игрока: {len(pending)}. Перед решением нажми «Обновить игру».')
+    if pending:st.info(f'Предложения игрока: {len(pending)}. Перед решением нажми «Обновить игру».')
+    elif revision!=st.session_state.get('_save_revision'):st.info('Игрок обновил лист или игра изменилась. Нажми «Обновить игру».')
 
 
 def render_request_controls(data):
@@ -1110,22 +1115,18 @@ def render_player():
         current=public['turn_order'][public['current_turn']] if public['turn_order'] else None
         st.info(f"Раунд {public['round']} · Ход: {current['name'] if current else 'нет участников'}")
     render_combatant_card(data,'ally','Твой персонаж',active=True)
-    section=st.radio('Игрок',['Действия','Сцена','Снаряжение'],horizontal=True,key='player_section',label_visibility='collapsed')
-    if section=='Действия':
+    if st.session_state.get('player_section')=='Действия':st.session_state['player_section']='Бой'
+    section=st.selectbox('Раздел персонажа',PLAYER_SECTIONS,key='player_section')
+    if section=='Бой':
         target=default_opponent(data,'ally')
         render_action_panel(data,'ally',target,player_mode=True)
         for request in public['requests'][-3:]: st.caption(request['action_name']+' · '+request['message'])
     elif section=='Сцена':
         if public['scene']: st.markdown(public['scene'])
         else: st.caption('Ведущий ещё не начал сцену')
-    elif profile:
-        st.write(profile.get('equipment_note',''))
-        for item in profile.get('reference',{}).get('resources',[]): st.write(f"{item['name']} × {item['qty']}")
-    if profile and profile['abilities']:
-        with st.expander('Характеристики и сопротивления'):
-            render_stat_grid(profile['stats'].items())
-            render_stat_grid([(element,str(public['ally']['resists'][element])+'%') for element in ELEMENTS],elements=True)
-        with st.expander('Правила способностей'): st.write(profile['abilities'])
+    else:render_player_sheet_section(section,data,SAVE_FILE.parent)
+    if section=='Бой' and profile and profile['abilities']:
+        with st.expander('Правила способностей'):st.write(profile['abilities'])
     st.caption('Экран обновляется каждые 3 секунды. Действия применяет ведущий после проверки.')
 
 
@@ -1142,7 +1143,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 16:
+if data.get("schema_version", 5) < 17:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):

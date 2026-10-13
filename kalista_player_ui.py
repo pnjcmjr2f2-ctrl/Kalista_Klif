@@ -1,0 +1,246 @@
+"""Full character UI for the ally, shared by the player and GM."""
+from pathlib import Path
+from copy import deepcopy
+from uuid import uuid4
+from html import escape
+import streamlit as st
+import kalista_engine as e
+from kalista_storage import read_state,write_state,StaleState
+from kalista_player_model import STATS,BONUSES,sheet_snapshot,edit_player_sheet,use_player_item,ensure_player_sheet
+
+SECTIONS=['Обзор','Бой','Снаряжение','Инвентарь','Заклинания и способности','Характеристики','Квесты','Заметки','Биография','Кубики','Сцена']
+
+def baseline(data,section):
+    key='_ps_baseline_'+section
+    if key not in st.session_state: st.session_state[key]=sheet_snapshot(data,section)
+    return deepcopy(st.session_state[key])
+
+def persist(root,section,values,expected,item_id=None):
+    if st.session_state.get('_role') not in ('gm','player'): raise ValueError('Нужен вход в программу')
+    path=Path(root)/'kalista_save.json'
+    for attempt in range(2):
+        saved,revision=read_state(path);latest=e.migrate(saved if saved is not None else deepcopy(e.DEFAULT))
+        candidate=use_player_item(latest,item_id,expected) if item_id else edit_player_sheet(latest,section,values,expected)
+        candidate=e.migrate(candidate)
+        if candidate['combat_active']: e.refresh_turn_order(candidate)
+        label='Предмет Шеогарата' if item_id else 'Лист игрока: '+section
+        candidate['combat_log'].insert(0,label);candidate['combat_log']=candidate['combat_log'][:80]
+        try:new_revision=write_state(path,candidate,revision,e.migrate)
+        except StaleState:
+            if attempt==0:continue
+            raise ValueError('Игра обновилась; повтори сохранение')
+        if st.session_state['_role']=='gm':
+            e.add_history(st.session_state.setdefault('_undo_history',[]),latest,candidate,label)
+            st.session_state['data']=candidate;st.session_state['_committed_data']=deepcopy(candidate)
+            st.session_state['_save_revision']=new_revision
+        for key in list(st.session_state):
+            if str(key).startswith(('ps_','_ps_baseline_')):del st.session_state[key]
+        st.session_state['_ps_notice']='Сохранено'
+        st.rerun()
+
+def commit(root,section,values,expected,item_id=None):
+    try:persist(root,section,values,expected,item_id)
+    except (ValueError,TypeError,KeyError,OSError) as exc:st.error(str(exc))
+
+def refresh_button():
+    if st.button('Обновить раздел',key='ps_refresh',help='Загрузить актуальные данные и сбросить незаписанные поля.'):
+        for key in list(st.session_state):
+            if str(key).startswith(('ps_','_ps_baseline_')):del st.session_state[key]
+        st.rerun()
+    if st.session_state.get('_ps_notice'):st.success(st.session_state.pop('_ps_notice'))
+
+def tiles(values):
+    content=''.join(f'<div class="stat-tile"><span>{escape(str(k))}</span><strong>{escape(str(v))}</strong></div>' for k,v in values)
+    st.markdown('<div class="stat-grid">'+content+'</div>',unsafe_allow_html=True)
+
+def overview(data,root):
+    a=data['ally'];p=a['sheet_profile']
+    if p['portrait_url']:
+        try:st.image(p['portrait_url'],width=180)
+        except Exception:st.caption('Портрет не загрузился')
+    st.progress(a['hp']/max(1,a['hp_max']),text=f"HP {a['hp']}/{a['hp_max']}")
+    if a.get('mana_max'):st.progress(a['mana_current']/a['mana_max'],text=f"MP {a['mana_current']}/{a['mana_max']}")
+    tiles([('Уровень',p['level']),('Атака',p['attack']),('Броня',a['armor']),('Шанс крита',f"{p['critical_chance']:.2f}%"),('Критический урон',p['critical_damage']),('Свободные очки',p['free_points'])])
+    with st.expander('Сопротивления и эффекты'):
+        tiles([(key,str(value)+'%') for key,value in a['resists'].items()])
+        for effect in a['effects']:st.write(e.effect_lifetime(effect))
+    with st.expander('HP и мана вручную'):
+        expected=baseline(data,'resources')
+        with st.form('ps_resources'):
+            hp=st.number_input('Текущие HP',min_value=0,max_value=a['hp_max'],value=min(a['hp'],a['hp_max']),key='ps_hp')
+            maximum=st.number_input('Максимум маны (0 — нет ресурса)',min_value=0,value=a.get('mana_max',0),key='ps_mmax')
+            current=st.number_input('Текущая мана',min_value=0,value=a.get('mana_current',0),key='ps_mp')
+            if st.form_submit_button('Сохранить ресурсы'):commit(root,'resources',dict(hp=hp,mana_current=current,mana_max=maximum,effects=expected['effects']),expected)
+    with st.expander('Опыт и повышение уровня'):
+        expected=baseline(data,'attributes')
+        st.caption('Текущий опыт: '+(str(p['xp']) if p['xp_known'] else 'не заполнен в актуальном листе'))
+        with st.form('ps_xp_form'):
+            xp=st.number_input('Опыт',min_value=0,value=p['xp'],key='ps_xp')
+            if st.form_submit_button('Сохранить опыт'):
+                values=deepcopy(expected);values.update(xp=xp,xp_known=True);commit(root,'attributes',values,expected)
+        if st.button('Повысить уровень · +4 свободных очка',key='ps_level_up'):
+            values=deepcopy(expected);values['level']+=1;values['free_points']+=4;commit(root,'attributes',values,expected)
+    with st.expander('Отдых'):
+        expected=baseline(data,'rest')
+        st.caption('Восстановит твои HP и ману, снимет эффекты и обычные перезарядки. Заряды и способности с ручной перезарядкой восстанавливаются отдельно.')
+        if st.button('Долгий отдых',key='ps_long_rest',disabled=data['combat_active']):commit(root,'rest',None,expected)
+
+def inventory(data,root):
+    p=data['ally']['sheet_profile'];expected=baseline(data,'inventory')
+    money=p['currency'];tiles([('Золото',money['gold']),('Серебро',money['silver']),('Медь',money['copper'])])
+    with st.expander('Изменить деньги'):
+        with st.form('ps_money_form'):
+            currency={key:st.number_input(label,min_value=0,value=money[key],key='ps_money_'+key) for key,label in (('gold','Золото'),('silver','Серебро'),('copper','Медь'))}
+            if st.form_submit_button('Сохранить деньги'):commit(root,'inventory',dict(items=expected['items'],currency=currency),expected)
+    for item in p['inventory']:
+        with st.expander(f"{item['name']} × {item['qty']}"):
+            st.write(item['desc'] or item['type'])
+            if item['use']:
+                st.caption({'heal':'Лечение','mana':'Мана','shield':'Щит'}[item['use']['kind']]+' +'+str(item['use']['value']))
+                if st.button('Использовать',key='ps_use_'+item['id'],disabled=item['qty']<1):commit(root,'inventory',None,expected,item['id'])
+            item_form(data,root,item,expected)
+    with st.expander('Добавить предмет',expanded=not p['inventory']):item_form(data,root,None,expected)
+
+def item_form(data,root,item,expected):
+    x=item or dict(id='new',name='',type='Предмет',qty=1,desc='',use=None);prefix='ps_item_'+x['id']
+    with st.form(prefix):
+        name=st.text_input('Название предмета',x['name'],key=prefix+'_name')
+        kind=st.text_input('Тип предмета',x['type'],key=prefix+'_type')
+        qty=st.number_input('Количество',min_value=0,value=x['qty'],key=prefix+'_qty')
+        desc=st.text_area('Описание предмета',x['desc'],key=prefix+'_desc')
+        use=st.selectbox('При использовании',['Нет','Лечение','Мана','Щит'],index=['Нет','heal','mana','shield'].index(x['use']['kind'] if x['use'] else 'Нет'),key=prefix+'_use')
+        value=st.number_input('Сила применения',min_value=0,value=x['use']['value'] if x['use'] else 0,key=prefix+'_value')
+        if st.form_submit_button('Сохранить предмет' if item else 'Добавить предмет'):
+            new=dict(id=x['id'] if item else uuid4().hex,name=name,type=kind,qty=qty,desc=desc,use=None if use=='Нет' else dict(kind={'Лечение':'heal','Мана':'mana','Щит':'shield'}[use],value=value))
+            items=[new if old['id']==x['id'] else old for old in expected['items']] if item else expected['items']+[new]
+            commit(root,'inventory',dict(items=items,currency=expected['currency']),expected)
+    if item and st.button('Удалить предмет',key=prefix+'_delete'):commit(root,'inventory',dict(items=[old for old in expected['items'] if old['id']!=x['id']],currency=expected['currency']),expected)
+
+def equipment(data,root):
+    p=data['ally']['sheet_profile'];expected=baseline(data,'equipment')
+    st.caption('Бонусы надетых вещей участвуют в формулах Excel. Снятые вещи остаются в резерве.')
+    for item in p['equipment']:
+        with st.expander(('Надето · ' if item['equipped'] else 'Резерв · ')+item['slot']+' · '+item['name']):
+            gear_form(root,item,expected)
+    with st.expander('Добавить снаряжение'):gear_form(root,None,expected)
+
+def gear_form(root,item,expected):
+    x=item or dict(id='new',slot='',name='',description='',bonuses={},equipped=False);prefix='ps_gear_'+x['id']
+    with st.form(prefix):
+        name=st.text_input('Предмет',x['name'],key=prefix+'_name');slot=st.text_input('Слот',x['slot'],key=prefix+'_slot')
+        equipped=st.checkbox('Надето',x['equipped'],key=prefix+'_equipped')
+        desc=st.text_area('Описание / свойства',x['description'],key=prefix+'_desc')
+        st.caption('Введите только известные числовые бонусы. Особые свойства остаются в описании.')
+        bonuses={}
+        for key in BONUSES:
+            value=x['bonuses'].get(key,0)
+            numeric=float(value) if key in ('Атака','Критический урон','Шанс крита') else int(value)
+            bonuses[key]=st.number_input('Бонус: '+key,value=numeric,key=prefix+'_'+key)
+        if st.form_submit_button('Сохранить снаряжение'):
+            new=dict(id=x['id'] if item else uuid4().hex,slot=slot,name=name,description=desc,bonuses=bonuses,equipped=equipped)
+            values=[new if old['id']==x['id'] else old for old in expected] if item else expected+[new]
+            commit(root,'equipment',values,expected)
+    if item and st.button('Удалить снаряжение',key=prefix+'_delete'):commit(root,'equipment',[old for old in expected if old['id']!=x['id']],expected)
+
+def attributes(data,root):
+    a=data['ally'];p=a['sheet_profile'];expected=baseline(data,'attributes')
+    tiles(p['stats'].items());st.caption(f"Свободных очков: {p['free_points']}")
+    with st.form('ps_allocate'):
+        stat=st.selectbox('Вложить в',STATS,key='ps_allocate_stat');count=st.number_input('Очков',min_value=1,value=1,key='ps_allocate_count')
+        if st.form_submit_button('Вложить очки'):
+            if count>expected['free_points']:st.error('Не хватает свободных очков')
+            else:
+                values=deepcopy(expected);values['base_stats'][stat]+=count;values['free_points']-=count;commit(root,'attributes',values,expected)
+    with st.expander('Ручная правка характеристик'):
+        with st.form('ps_attributes'):
+            base={key:st.number_input('Базовая: '+key,min_value=0,value=p['base_stats'][key],key='ps_base_'+key) for key in STATS}
+            level=st.number_input('Уровень',min_value=1,value=p['level'],key='ps_level');points=st.number_input('Свободные очки',min_value=0,value=p['free_points'],key='ps_points')
+            adjust={key:st.number_input('Ручная поправка: '+label,value=float(p['formula_adjustments'][key]),key='ps_adjust_'+key) for key,label in (('hp','максимум HP'),('armor','броня'),('attack','атака'),('critical_damage','критический урон'),('critical_chance','шанс крита'))}
+            resist={key:st.number_input('Базовое сопротивление: '+key,value=int(p['resist_adjustments'][key]),key='ps_resist_'+key) for key in a['resists']}
+            if st.form_submit_button('Сохранить характеристики'):
+                values=deepcopy(expected);values.update(base_stats=base,level=level,free_points=points,formula_adjustments=adjust,resist_adjustments=resist);commit(root,'attributes',values,expected)
+    st.caption('HP = уровень×20 + выносливость×10; броня = 10 + выносливость×5; атака = бонус атаки оружия×(1 + сила/500). Крит = атака×2 + бонус; шанс = 5 + ловкость×0,05 + бонус, максимум 95%. Ручные поправки сохраняются.')
+
+def quests(data,root):
+    expected=baseline(data,'quests')
+    for quest in data['ally']['sheet_profile']['quests']:
+        with st.expander(quest['name']+' · '+quest['status']):quest_form(root,quest,expected)
+    with st.expander('Добавить квест',expanded=not expected):quest_form(root,None,expected)
+
+def quest_form(root,item,expected):
+    x=item or dict(id='new',name='',desc='',status='Активен');prefix='ps_quest_'+x['id']
+    with st.form(prefix):
+        name=st.text_input('Название квеста',x['name'],key=prefix+'_name');desc=st.text_area('Задачи и заметки',x['desc'],key=prefix+'_desc')
+        status=st.selectbox('Статус квеста',['Активен','Выполнен','Провален'],index=['Активен','Выполнен','Провален'].index(x['status']),key=prefix+'_status')
+        if st.form_submit_button('Сохранить квест'):
+            new=dict(id=x['id'] if item else uuid4().hex,name=name,desc=desc,status=status)
+            commit(root,'quests',[new if old['id']==x['id'] else old for old in expected] if item else expected+[new],expected)
+    if item and st.button('Удалить квест',key=prefix+'_delete'):commit(root,'quests',[q for q in expected if q['id']!=x['id']],expected)
+
+def biography(data,root):
+    p=data['ally']['sheet_profile'];expected=baseline(data,'identity')
+    if p['biography']:st.markdown(p['biography'])
+    with st.form('ps_identity'):
+        values=dict(name=st.text_input('Имя',data['ally']['name'],key='ps_name'),race=st.text_input('Раса',p['race'],key='ps_race'),klass=st.text_input('Класс',p['class'],key='ps_class'),portrait_url=st.text_input('URL портрета',p['portrait_url'],key='ps_portrait'),biography=st.text_area('Биография',p['biography'],height=220,key='ps_biography'))
+        if st.form_submit_button('Сохранить персонажа'):commit(root,'identity',values,expected)
+
+def abilities(data,root):
+    expected=baseline(data,'actions');actions=data['ally']['actions']
+    if actions:
+        aid=st.selectbox('Мои способности',[a['id'] for a in actions],format_func=lambda v:next(a['name'] for a in actions if a['id']==v),key='ps_book_selection')
+        action=next(a for a in actions if a['id']==aid)
+        st.write(action['description'])
+        st.caption(f"Мана {action['mana_cost']} · КД {action['cooldown_left']}/{action['cooldown']} · Заряды {action['charges_left']}/{action['charges_max']}")
+        with st.expander('Редактировать способность'):action_form(root,action,expected)
+        if st.button('Ручная перезарядка способности',key='ps_recharge_'+aid):
+            values=deepcopy(expected);new=next(a for a in values if a['id']==aid)
+            new.update(cooldown_left=0,spent=False,charges_left=new['charges_max']);commit(root,'actions',values,expected)
+    with st.expander('Расовые и классовые свойства'):
+        st.write(data['ally']['sheet_profile']['abilities'])
+    with st.expander('Добавить заклинание / способность'):action_form(root,None,expected)
+
+def action_form(root,action,expected):
+    x=action or e.action_template('');prefix='ps_action_'+(x['id'] if action else 'new')
+    with st.form(prefix):
+        name=st.text_input('Название способности',x['name'],key=prefix+'_name')
+        types=['damage','heal','shield','note'];kind=st.selectbox('Действие',types,index=types.index(x['kind']),format_func=lambda v:dict(damage='Урон',heal='Лечение',shield='Щит',note='Статус')[v],key=prefix+'_kind')
+        amount=st.number_input('Базовая величина',min_value=0,value=x['amount'],key=prefix+'_amount');shared=st.checkbox('Использовать атаку из характеристик',x['shared_attack'],key=prefix+'_shared')
+        dtype=st.selectbox('Тип урона',e.DAMAGE_TYPES,index=e.DAMAGE_TYPES.index(x['damage_type']),key=prefix+'_dtype')
+        mana=st.number_input('Стоимость маны',min_value=0,value=x['mana_cost'],key=prefix+'_mana');cooldown=st.number_input('КД: начала личного хода',min_value=0,value=x['cooldown'],key=prefix+'_cd')
+        hits=st.number_input('Попаданий',min_value=1,max_value=10,value=x['hits'],key=prefix+'_hits')
+        effect=st.selectbox('Дополнительный эффект',list(e.EFFECT_KINDS),index=list(e.EFFECT_KINDS).index(x['effect_kind']),format_func=lambda v:e.EFFECT_KINDS[v],key=prefix+'_effect')
+        effect_value=st.number_input('Величина эффекта',value=x['effect_value'],key=prefix+'_ev');duration=st.number_input('Длительность: раунды / тики (0 — бессрочно)',min_value=0,value=x['duration'],key=prefix+'_dur')
+        element=st.selectbox('Стихия эффекта',e.ELEMENTS,index=e.ELEMENTS.index(x['effect_element']),key=prefix+'_element')
+        stacks=st.number_input('Максимум стаков',min_value=1,max_value=20,value=x['max_stacks'],key=prefix+'_stacks')
+        charges=st.number_input('Максимум зарядов (0 — без ограничения)',min_value=0,value=x['charges_max'],key=prefix+'_charges')
+        left=st.number_input('Осталось зарядов',min_value=0,value=x['charges_left'],key=prefix+'_left')
+        penetration=st.number_input('Вычесть из брони',min_value=0,value=x.get('armor_penetration',0),key=prefix+'_penetration')
+        dice=st.number_input('Дополнительных кубиков',min_value=0,max_value=10,value=x.get('extra_dice_count',0),key=prefix+'_dice');sides=st.number_input('Граней кубика',min_value=0,max_value=1000,value=x.get('extra_dice_sides',0),key=prefix+'_sides')
+        reaction=st.checkbox('Реакция вне своего хода',x.get('reaction',False),key=prefix+'_reaction');manual=st.checkbox('Ручная перезарядка после применения',x['manual_recharge'],key=prefix+'_manual')
+        desc=st.text_area('Правила и описание',x['description'],key=prefix+'_desc');ready=st.checkbox('Правила и числа согласованы с ведущим',not x['needs_setup'],key=prefix+'_ready')
+        if st.form_submit_button('Сохранить способность'):
+            new=deepcopy(x);new.update(name=name,kind=kind,amount=amount,shared_attack=shared,damage_type=dtype,mana_cost=mana,cooldown=cooldown,hits=hits,effect_kind=effect,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,charges_max=charges,charges_left=left,armor_penetration=penetration,extra_dice_count=dice,extra_dice_sides=sides,reaction=reaction,manual_recharge=manual,description=desc,needs_setup=not ready)
+            values=[new if old['id']==x['id'] else old for old in expected] if action else expected+[new]
+            commit(root,'actions',values,expected)
+    if action and st.button('Удалить способность',key=prefix+'_delete'):commit(root,'actions',[old for old in expected if old['id']!=x['id']],expected)
+
+def render_section(section,data,root):
+    if not data['ally'].get('sheet_profile'):st.info('Ведущему нужно загрузить лист персонажа в «Отряде».');return
+    refresh_button()
+    if section=='Обзор':overview(data,root)
+    elif section=='Снаряжение':equipment(data,root)
+    elif section=='Инвентарь':inventory(data,root)
+    elif section=='Характеристики':attributes(data,root)
+    elif section=='Заклинания и способности':abilities(data,root)
+    elif section=='Квесты':quests(data,root)
+    elif section=='Биография':biography(data,root)
+    elif section=='Заметки':
+        expected=baseline(data,'notes')
+        with st.form('ps_notes_form'):
+            notes=st.text_area('Мои заметки',data['ally']['sheet_profile']['notes'],height=300,key='ps_notes')
+            if st.form_submit_button('Сохранить заметки'):commit(root,'notes',notes,expected)
+    elif section=='Кубики':
+        count=st.number_input('Количество кубиков',min_value=1,max_value=100,value=1,key='ps_roll_count');sides=st.selectbox('Кубик',[4,6,8,10,12,20,100],index=5,key='ps_roll_sides');mod=st.number_input('Модификатор',value=0,key='ps_roll_mod')
+        if st.button('Бросить',key='ps_roll'):
+            rolls=[e.random.randint(1,sides) for _ in range(count)];st.session_state['_ps_roll_result']=f"{rolls} + {mod} = {sum(rolls)+mod}"
+        if st.session_state.get('_ps_roll_result'):st.info(st.session_state['_ps_roll_result'])
