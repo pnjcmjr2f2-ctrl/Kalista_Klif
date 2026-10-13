@@ -7,7 +7,7 @@ import streamlit as st
 import kalista_engine as e
 from kalista_text import readable_rules
 from kalista_storage import read_state,write_state,StaleState
-from kalista_player_model import EQUIPMENT_SLOTS,ITEM_TYPES,STATS,BONUSES,sheet_snapshot,edit_player_sheet,use_player_item,ensure_player_sheet
+from kalista_player_model import EQUIPMENT_SLOTS,ITEM_TYPES,STATS,BONUSES,sheet_snapshot,edit_player_sheet,use_player_item,ensure_player_sheet,gear_totals
 
 SECTIONS=['Обзор','Бой','Снаряжение','Инвентарь','Заклинания и способности','Характеристики','Квесты','Заметки','Биография','Кубики','Сцена']
 
@@ -167,13 +167,45 @@ def gear_form(root,item,expected,default_slot="Резерв"):
 
 def attributes(data,root):
     a=data['ally'];p=a['sheet_profile'];expected=baseline(data,'attributes')
-    tiles(p['stats'].items());st.caption(f"Свободных очков: {p['free_points']}")
-    with st.form('ps_allocate'):
-        stat=st.selectbox('Вложить в',STATS,key='ps_allocate_stat');count=st.number_input('Очков',min_value=1,value=1,key='ps_allocate_count')
-        if st.form_submit_button('Вложить очки'):
-            if count>expected['free_points']:st.error('Не хватает свободных очков')
-            else:
-                values=deepcopy(expected);values['base_stats'][stat]+=count;values['free_points']-=count;commit(root,'attributes',values,expected)
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Характеристики</div>",unsafe_allow_html=True)
+    st.info(f"Свободные очки: **{p['free_points']}** · Уровень **{p['level']}**")
+    gear=gear_totals(p)
+    with st.expander('Характеристики',expanded=True):
+        for stat in STATS:
+            cols=st.columns([2,1,1,1,1])
+            cols[0].write(f"**{stat}**")
+            cols[1].write(f"База {p['base_stats'][stat]}")
+            bonus=gear[stat]+p['stat_adjustments'][stat]
+            cols[2].write(f"{bonus:+g}")
+            cols[3].write(f"**{p['stats'][stat]}**")
+            if cols[4].button('＋',key='ps_plus_'+stat,disabled=p['free_points']<=0):
+                values=deepcopy(expected);values['base_stats'][stat]+=1;values['free_points']-=1
+                commit(root,'attributes',values,expected)
+        st.markdown('**Производные**')
+        c1,c2,c3=st.columns(3)
+        c1.metric('Атака',p['attack']);c1.metric('Критический урон',p['critical_damage'])
+        c2.metric('Уклонение',f"{e.evasion_chance(a)*100:.1f}%");c2.metric('Инициатива',a.get('initiative',0))
+        c3.metric('Броня',a['armor']);c3.metric('Критический удар',f"{p['critical_chance']:.2f}%")
+    with st.expander('Сопротивления стихиям'):
+        cols=st.columns(6)
+        for index,element in enumerate(e.ELEMENTS):cols[index].metric(element,str(e.effective_defense(a,element))+'%')
+    with st.expander('Пассивные способности (расовые и классовые)'):
+        st.write(readable_rules(p['abilities']))
+    with st.expander('Особые умения'):
+        for action in a['actions']:
+            if action.get('rule') not in ('eye','stance'):continue
+            reason=a.get('eye_used',False) if action.get('rule')=='eye' else action.get('cooldown_left',0)>0
+            status='⏳ сейчас недоступно' if reason else '🟢 доступно'
+            st.markdown(f"**{action['name']}** — {status}")
+            st.write(action['description'])
+        st.caption('Применение — на странице «Бой», с учётом действий и текущего хода.')
+    with st.expander('Вложить несколько очков'):
+        with st.form('ps_allocate'):
+            stat=st.selectbox('Вложить в',STATS,key='ps_allocate_stat');count=st.number_input('Очков',min_value=1,value=1,key='ps_allocate_count')
+            if st.form_submit_button('Вложить очки'):
+                if count>expected['free_points']:st.error('Не хватает свободных очков')
+                else:
+                    values=deepcopy(expected);values['base_stats'][stat]+=count;values['free_points']-=count;commit(root,'attributes',values,expected)
     with st.expander('Ручная правка характеристик'):
         with st.form('ps_attributes'):
             base={key:st.number_input('Базовая: '+key,min_value=0,value=p['base_stats'][key],key='ps_base_'+key) for key in STATS}
@@ -209,19 +241,21 @@ def biography(data,root):
 
 def abilities(data,root):
     expected=baseline(data,'actions');actions=data['ally']['actions']
-    if actions:
-        aid=st.selectbox('Мои способности',[a['id'] for a in actions],format_func=lambda v:next(a['name']+' · '+e.reach_label(a) for a in actions if a['id']==v),key='ps_book_selection')
-        action=next(a for a in actions if a['id']==aid)
-        st.write(action['description'])
-        st.caption(e.reach_label(action)+' · Ближняя — только рядом; Дальняя — 50% промаха при враге рядом; Любая — обе дистанции без штрафа.')
-        st.caption(f"Мана {action['mana_cost']} · КД {action['cooldown_left']}/{action['cooldown']} · Заряды {action['charges_left']}/{action['charges_max']}")
-        with st.expander('Редактировать способность'):action_form(root,action,expected)
-        if st.button('Ручная перезарядка способности',key='ps_recharge_'+aid):
-            values=deepcopy(expected);new=next(a for a in values if a['id']==aid)
-            new.update(cooldown_left=0,spent=False,charges_left=new['charges_max']);commit(root,'actions',values,expected)
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Заклинания и способности</div>",unsafe_allow_html=True)
+    st.caption('Перезарядка указана в личных ходах. 0 — без перезарядки. Применение — на странице «Бой».')
+    for action in actions:
+        with st.expander(f"{action['name']} · {e.reach_label(action)} (КД {action['cooldown']})"):
+            st.write(action['description'])
+            st.caption(f"Мана {action['mana_cost']} · КД {action['cooldown_left']}/{action['cooldown']} · Заряды {action['charges_left']}/{action['charges_max']}")
+            action_form(root,action,expected)
+            if st.button('Ручная перезарядка способности',key='ps_recharge_'+action['id']):
+                values=deepcopy(expected);new=next(a for a in values if a['id']==action['id'])
+                new.update(cooldown_left=0,spent=False,charges_left=new['charges_max']);commit(root,'actions',values,expected)
     with st.expander('Расовые и классовые свойства'):
         st.write(readable_rules(data['ally']['sheet_profile']['abilities']))
-    with st.expander('Добавить заклинание / способность'):action_form(root,None,expected)
+    st.markdown('**Новая способность**')
+    action_form(root,None,expected)
+
 
 def action_form(root,action,expected):
     x=action or e.action_template('');prefix='ps_action_'+(x['id'] if action else 'new')
