@@ -60,7 +60,7 @@ def overview(data,root):
         try:st.image(p['portrait_url'],width=180)
         except Exception:st.caption('Портрет не загрузился')
     if a.get('mana_max'):st.progress(a['mana_current']/a['mana_max'],text=f"MP {a['mana_current']}/{a['mana_max']}")
-    tiles([('Уровень',p['level']),('Атака',p['attack']),('Броня',a['armor']),('Шанс крита',f"{p['critical_chance']:.2f}%"),('Критический урон',p['critical_damage']),('Свободные очки',p['free_points'])])
+    tiles([('Уровень',p['level']),('Атака',p['attack']),('Броня',a['armor']),('Уклонение',f"{e.evasion_chance(a)*100:.1f}%"),('Шанс крита',f"{p['critical_chance']:.2f}%"),('Критический урон',p['critical_damage']),('Свободные очки',p['free_points'])])
     with st.expander('Сопротивления и эффекты'):
         tiles([(key,str(value)+'%') for key,value in a['resists'].items()])
         for effect in a['effects']:st.write(e.effect_lifetime(effect))
@@ -230,6 +230,7 @@ def action_form(root,action,expected):
             types=['damage','heal','shield','note'];kind=st.selectbox('Действие',types,index=types.index(x['kind']),format_func=lambda v:dict(damage='Урон',heal='Лечение',shield='Щит',note='Статус')[v],key=prefix+'_kind')
             amount=st.number_input('Базовая величина',min_value=0,value=x['amount'],key=prefix+'_amount');shared=st.checkbox('Использовать атаку из характеристик',x['shared_attack'],key=prefix+'_shared')
             dtype=st.selectbox('Тип урона',e.DAMAGE_TYPES,index=e.DAMAGE_TYPES.index(x['damage_type']),key=prefix+'_dtype')
+            reach=st.selectbox('Дальность атаки',['Ближняя','Дальняя','Любая'],index=['Ближняя','Дальняя','Любая'].index(x.get('reach','Ближняя')),key=prefix+'_reach')
             mana=st.number_input('Стоимость маны',min_value=0,value=x['mana_cost'],key=prefix+'_mana');cooldown=st.number_input('Перезарядка (личные ходы)',min_value=0,value=x['cooldown'],key=prefix+'_cd')
             hits=st.number_input('Попаданий',min_value=1,max_value=10,value=x['hits'],key=prefix+'_hits')
         with editor_tabs[1]:
@@ -246,7 +247,7 @@ def action_form(root,action,expected):
         with editor_tabs[3]:
             desc=st.text_area('Правила и описание',x['description'],key=prefix+'_desc');ready=st.checkbox('Правила и числа согласованы с ведущим',not x['needs_setup'],key=prefix+'_ready')
         if st.form_submit_button('Сохранить способность'):
-            new=deepcopy(x);new.update(name=name,kind=kind,amount=amount,shared_attack=shared,damage_type=dtype,mana_cost=mana,cooldown=cooldown,hits=hits,effect_kind=effect,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,charges_max=charges,charges_left=left,armor_penetration=penetration,extra_dice_count=dice,extra_dice_sides=sides,reaction=reaction,manual_recharge=manual,description=desc,needs_setup=not ready)
+            new=deepcopy(x);new.update(name=name,kind=kind,amount=amount,shared_attack=shared,damage_type=dtype,reach=reach,mana_cost=mana,cooldown=cooldown,hits=hits,effect_kind=effect,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,charges_max=charges,charges_left=left,armor_penetration=penetration,extra_dice_count=dice,extra_dice_sides=sides,reaction=reaction,manual_recharge=manual,description=desc,needs_setup=not ready)
             values=[new if old['id']==x['id'] else old for old in expected] if action else expected+[new]
             commit(root,'actions',values,expected)
     if action and st.button('Удалить способность',key=prefix+'_delete'):commit(root,'actions',[old for old in expected if old['id']!=x['id']],expected)

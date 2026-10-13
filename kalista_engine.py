@@ -163,6 +163,7 @@ def recalc(d):
     d["mana_regen"]=round(spi*0.5)
     d["initiative"]=round(agi/2 + wis/4)
     d["control_resist"]=min(0.9, wis/4/100)
+    d["evasion_chance"]=min(.5,max(0,agi*.005))
     d["ritual_bonus"]=wis/5/100
     d["fear_power"]=cha/3/100
 
@@ -227,7 +228,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -241,6 +242,24 @@ def migrate(saved):
             if spell['name']=='Теневой укол':
                 spell['cd_max']=2
                 spell['desc']='Чистый урон: игнорирует броню и сопротивления; щиты поглощают урон.'
+    if saved.get('schema_version',5)<19:
+        for _,target in participants(data):target['action_limit']=2
+        ally=data['ally']
+        if ally.get('sheet_profile'):
+            removed={'Когти','Кислотные брызги','Газовое облако','Десница Ока','Совершенная контратака'}
+            ally['actions']=[a for a in ally.get('actions',[]) if a['name'].strip() not in removed]
+            existing={a['name'] for a in ally['actions']}
+            ally['actions'] += [a for a in warrior_actions() if a['name'] not in existing]
+            ally['counterattack_enabled']=True
+            ally['sheet_profile']['abilities']='Видящий — позволяет видеть суть вещей.\nСкорострел — две атаки мечом за одно действие.\nКонтратака — 65% после потери HP от прямого ближнего удара; обычный удар мечом без расхода действий.\nДесница Ока — активная способность, +100% урона до конца текущего хода, один раз за бой.'
+            fill_warrior_equipment(ally)
+        invalidate_player_requests(data,'Правила боя обновились; предложи действие заново')
+    data.setdefault('distances',{})
+    known={token for token,_ in participants(data)}
+    if not isinstance(data['distances'],dict):raise ValueError('Повреждены дистанции')
+    for key,value in data['distances'].items():
+        if len(key.split('|'))!=2 or value not in ('Ближняя','Дальняя'):raise ValueError('Неверная дистанция')
+    data['distances']={k:v for k,v in data['distances'].items() if all(t in known for t in k.split('|'))}
     for actor in data.get("turn_order", []):
         if actor.get("kind") == "player": actor["name"] = data["name"]
     for _, target in participants(data):
@@ -416,7 +435,7 @@ def migrate(saved):
     for enemy in data["enemies"]:
         if "side" in enemy and enemy["side"] not in ("Враг", "Союзник", "Нейтральный"):
             raise ValueError("Неизвестная сторона участника боя")
-    data["schema_version"] = 18
+    data["schema_version"] = 19
     return data
 
 
@@ -543,7 +562,7 @@ def effective_defense(target, damage_type):
 
 
 def damage_preview(target, amount, damage_type="Физический", final=False,
-                   bypass_shields=False, defense_factor=1.0):
+                   bypass_shields=False, defense_factor=1.0, apply_stance=True):
     nonnegative_int(amount, "Урон")
     if not isinstance(defense_factor, (int, float)) or not math.isfinite(defense_factor) or not 0 <= defense_factor <= 1:
         raise ValueError("Неверная доля сопротивления")
@@ -557,6 +576,7 @@ def damage_preview(target, amount, damage_type="Физический", final=Fal
         protected = round(incoming * .9)
         racial_reduction = incoming - protected
         incoming = protected
+    if apply_stance and target.get('defensive_stance'):incoming=round(incoming*.7)
     capacity = sum(effect["value"] for effect in target.get("effects", []) if effect["kind"] == "shield")
     absorbed = 0 if bypass_shields else min(incoming, capacity)
     hp_key, _ = hp_fields(target)
@@ -567,8 +587,8 @@ def damage_preview(target, amount, damage_type="Физический", final=Fal
 
 
 def apply_damage(target, amount, damage_type="Физический", final=False,
-                 bypass_shields=False, defense_factor=1.0):
-    result = damage_preview(target, amount, damage_type, final, bypass_shields, defense_factor)
+                 bypass_shields=False, defense_factor=1.0, apply_stance=True):
+    result = damage_preview(target, amount, damage_type, final, bypass_shields, defense_factor, apply_stance)
     remaining = result["absorbed"]
     if remaining:
         # Порядок наложения виден в списке эффектов; щиты расходуются в том же порядке.
@@ -712,6 +732,9 @@ def begin_actor_turn(data):
     invalidate_player_requests(data,'Ход завершён; предложи действие в актуальном ходе')
     if actor:
         combatant = actor_target(data, actor)
+        if combatant:
+            combatant['movement_used']=False
+            combatant['defensive_stance']=False
         for ability in (combatant or {}).get("actions", []):
             ability["cooldown_left"] = max(0, ability.get("cooldown_left", 0) - 1)
     messages=[]
@@ -756,6 +779,7 @@ def advance_turn(data):
         messages.append("Нет участников с HP выше 0; восстанови HP и начни бой заново.")
         return messages
     target = actor_target(data, get_current_actor(data))
+    if target is not None:target['eye_damage_boost']=False
     if target is not None and target[hp_fields(target)[0]] > 0:
         messages.extend(tick_periodic(target))
     data["current_turn"] += 1
@@ -779,6 +803,7 @@ def shadow_shield_amount(data):
 
 
 def outgoing_damage(source,amount,damage_type):
+    amount=round(amount*2) if source.get('eye_damage_boost') else amount
     return round(amount*.65) if damage_type=='Физический' and any(e['kind']=='weakness' for e in source.get('effects',[])) else amount
 
 
@@ -826,7 +851,7 @@ def spell_damage_preview(data,spell,target,raw,final_damage=None):
 
 def spell_damage_apply(data,spell,target,raw,final_damage=None):
     preview=spell_damage_preview(data,spell,target,raw,final_damage)
-    result=apply_damage(target,preview['incoming'],final=True)
+    result=apply_damage(target,preview['incoming'],final=True,apply_stance=False)
     result['racial_reduction']=preview['racial_reduction']
     return result
 
@@ -887,6 +912,8 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
         if raw > 0:
             result=spell_damage_apply(data,spell,target,raw,final_damage)
             messages.append(damage_message(target['name'],result))
+            target_token=next(t for t,v in participants(data) if v is target)
+            messages.extend(counterattack(data,'player',target_token,result))
             if final_damage is not None:messages.append('Урон назначен ведущим; щит учтён')
             if empowered:data['pepel_empower']=False
         messages.extend(roll_spell_effects(data,spell,target))
@@ -1075,6 +1102,8 @@ def effective_crit_chance(data):
 
 
 def start_combat(data):
+    for _,target in participants(data):
+        target['eye_damage_boost']=False;target['defensive_stance']=False;target['eye_used']=False;target['movement_used']=False
     data["combat_active"] = True
     for _, target in participants(data):
         for effect in target.get("effects", []): effect["applied_round"] = 0
@@ -1087,6 +1116,7 @@ def start_combat(data):
 
 def end_combat(data):
     data["combat_active"] = False
+    for _,target in participants(data):target['eye_damage_boost']=False;target['defensive_stance']=False;target['movement_used']=False
     data["turn_order"] = []
     data["current_turn"] = 0
     data["player_turns_started"] = 0
@@ -1168,7 +1198,10 @@ def imported_friend():
     profile['source'] += ' + Шеогарат — Long Story Short.json'
     profile['equipment_note'] = reference['texts']['equipment']
     ally['actions'] = friend_actions()
+    ally['counterattack_enabled']=True
     ensure_player_sheet(ally)
+    fill_warrior_equipment(ally)
+    profile['abilities']='Видящий — позволяет видеть суть вещей.\nСкорострел — две атаки мечом за одно действие.\nКонтратака — 65% после потери HP от прямого ближнего удара; обычный удар мечом без расхода действий.\nДесница Ока — +100% урона до конца текущего хода, один раз за бой.'
     return ally
 
 
@@ -1342,16 +1375,67 @@ def action_template(name, kind='damage', amount=0, hits=1, **changes):
     return action
 
 
+def warrior_actions():
+    return [action_template('Десница Ока',kind='note',rule='eye',description='Один раз за бой: +100% исходящего урона до конца текущего хода. Активация расходует одно действие.'),
+            action_template('Мощный удар',shared_attack=True,multiplier=1.5,cooldown=2,description='150% обычного урона меча. Одно действие; КД 2 личных хода.'),
+            action_template('Защитная стойка',kind='note',rule='stance',cooldown=1,description='Входящий урон −30% до начала следующего личного хода. Одно действие; КД 1 личный ход.')]
+
+
+def movement_actions():
+    return [action_template('Сближение',kind='note',rule='move_close',reach='Любая',description='Сблизиться с выбранной целью. Одно перемещение за ход, без расхода действий.'),action_template('Отступление',kind='note',rule='move_far',reach='Любая',description='Отойти от выбранной цели. Одно перемещение за ход, без расхода действий.')]
+
+
 def friend_actions():
-    return [action_template('Удар оружием', shared_attack=True),
-            action_template('Скорострел', hits=2, shared_attack=True, description='Две рукопашные атаки. Защита и щиты считаются для каждого попадания отдельно.'),
-            action_template('Совершенная контратака', shared_attack=True, reaction=True, description='Реакция на ближнюю атаку. Ведущий подтверждает условие; ход автоматически не завершается.'),
-            action_template('Когти', needs_setup=True, description='Из JSON: 1d6+[dex]. Перевод в текущую систему чисел задаёт ведущий.'),
-            action_template('Кислотные брызги', needs_setup=True, description='Из JSON: 1d8+[con], 30 м. Тикающий дебафф: 3 × −2 брони, до 5 стаков. Урон, стихия и порядок снижения брони требуют настройки.'),
-            action_template('Газовое облако', needs_setup=True, description='Из JSON: 1d10+[con], область 10×10. Урон и стихия требуют настройки. Целей можно выбрать несколько.'),
-            action_template('Десница Ока', needs_setup=True, manual_recharge=True, description='Пробитие +10, дополнительный 1d6, игнор критической неудачи. В записи одновременно есть «раз в три хода» и «КД 7 дней»; ведущий задаёт трактовку. После применения нужна ручная перезарядка.'),
-            action_template('Видящий', kind='note', description='Возможность видеть суть вещей (трансформируемый). Исходная запись не задаёт боевого числового эффекта.'),
-            action_template('Лечение', kind='heal', needs_setup=True, description='Сила, стоимость и перезарядка задаются ведущим.')]
+    return [action_template('Удар оружием',shared_attack=True),action_template('Скорострел',hits=2,shared_attack=True,description='Две атаки мечом за одно действие; отдельные проверки уклонения, защиты и щитов.'),action_template('Видящий',kind='note',description='Позволяет видеть суть вещей. Числовой боевой эффект не задан.')] + warrior_actions() + movement_actions()
+
+
+def fill_warrior_equipment(ally):
+    from kalista_player_model import ensure_player_sheet
+    ensure_player_sheet(ally)
+    p=ally['sheet_profile']
+    if p.get('warrior_equipment_filled'):return
+    for item in p['equipment']:
+        if 'Грозовой меч' in item['name'] and not any(x['equipped'] and x['slot']=='Оружие 2' for x in p['equipment']):item.update(slot='Оружие 2',equipped=True)
+        if 'ниргхала' in item['name'].lower() and 'сапоги' in item['name'].lower():
+            item.update(slot='Сапоги',equipped=True)
+            item['description']+='\nЛегендарная часть комплекта Ниргхала. Числовой бонус комплекта не задан.'
+        if item['slot'].startswith(('Кольцо','Ожерелье','Серьга')):item['equipped']=False
+    names={'Шлем':'Обычный шлем','Наплечники':'Обычные наплечники','Перчатки':'Обычные перчатки','Нагрудник':'Кираса Ниргхала','Пояс':'Обычный пояс','Штаны':'Обычные поножи'}
+    for slot,name in names.items():
+        if not any(x['equipped'] and x['slot']==slot for x in p['equipment']):
+            p['equipment'].append(dict(id=uuid4().hex,name=name,slot=slot,equipped=True,bonuses={},description='Легендарная часть комплекта Ниргхала. Числовой бонус комплекта не задан.' if slot=='Нагрудник' else 'Обычная экипировка. Текущая защита уже учтена в характеристиках.'))
+    p['warrior_equipment_filled']=True
+
+
+def distance_between(data,first,second):
+    return data.get('distances',{}).get('|'.join(sorted((first,second))),'Дальняя' if 'player' in (first,second) and first!=second else 'Ближняя')
+
+
+def check_reach(data,source_token,action,target_token):
+    if action['kind']=='damage' and action.get('reach','Ближняя' if action['damage_type']=='Физический' else 'Дальняя')=='Ближняя' and distance_between(data,source_token,target_token)!='Ближняя':
+        raise ValueError('Цель далеко: сначала сблизься; ближняя атака не проходит')
+
+
+def evasion_chance(target):
+    dex=target.get('sheet_profile',{}).get('stats',{}).get('Ловкость',target.get('base_stats',{}).get('Ловкость',target.get('agility',0)))
+    if 'base_stats' in target and not target.get('sheet_profile'):dex=total_stat(target,'Ловкость')
+    return round(min(.5,max(0,dex*.005)),8)
+
+
+def counterattack(data,source_token,target_token,result):
+    target=participant(data,target_token);source=participant(data,source_token)
+    if not target.get('counterattack_enabled') or result['hp_loss']<=0 or distance_between(data,source_token,target_token)!='Ближняя':return []
+    if target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0 or any(e['kind']=='fear' for e in target.get('effects',[])):return []
+    roll=random.random()
+    if roll>=.65:return [f"{target['name']}: контратака не сработала ({roll*100:.1f}% ≥ 65%)"]
+    if random.random()<evasion_chance(source):return [f"{source['name']}: уклонение от контратаки"]
+    if source is data and data.get('ten_invis'):return [f"{source['name']}: контратака не попала — невидимость"]
+    amount=round(target.get('sheet_profile',{}).get('attack',target.get('attack_damage',0)))
+    amount=outgoing_damage(target,amount,'Физический')
+    answer=apply_damage(source,amount,'Физический')
+    message='Контратака: '+damage_message(source['name'],answer)
+    record_turn_action(data,target_token,'Контратака',source['name'],message,counts=False)
+    return [message]
 
 
 def validate_action_state(data):
@@ -1375,7 +1459,7 @@ def validate_action_state(data):
             nonnegative_int(target.get('mana_current',-1),'Мана участника')
             nonnegative_int(target.get('mana_max',-1),'Максимум маны участника')
             if target['mana_current']>target['mana_max']: raise ValueError('Мана выше максимума')
-        target.setdefault('action_limit', 0)
+        target['action_limit']=2
         nonnegative_int(target['action_limit'], 'Лимит действий')
         if target.get('sheet_profile'):
             target.setdefault('actions', friend_actions())
@@ -1384,11 +1468,21 @@ def validate_action_state(data):
             if target.get('description', '').endswith('Уровень 17'): target['description'] = ''
         target.setdefault('actions', [])
         if not isinstance(target['actions'], list): raise ValueError('Действия должны быть списком')
+        if not token.startswith('npc:'):
+            if not target['actions'] and token!='player':
+                target['actions']=[action_template('Атака',shared_attack=True,damage_type=target.get('attack_type','Физический')),action_template('Лечение',kind='heal',amount=target.get('heal_amount',0),needs_setup=not bool(target.get('heal_amount',0)))]
+            existing={a.get('rule') for a in target['actions']}
+            target['actions'] += [a for a in movement_actions() if a['rule'] not in existing]
         ids = set()
         for action in target['actions']:
             for field in ('mana_cost','charges_max','charges_left'): action.setdefault(field,0)
             for field in ('armor_penetration','extra_dice_count','extra_dice_sides'): action.setdefault(field,0)
-            action.setdefault('reaction',action['name']=='Совершенная контратака')
+            action.setdefault('reach','Ближняя' if action['damage_type']=='Физический' else 'Дальняя')
+            action.setdefault('multiplier',1.0)
+            if action['reach'] not in ('Ближняя','Дальняя','Любая'):raise ValueError('Неверная дальность атаки')
+            if not isinstance(action['multiplier'],(int,float)) or not math.isfinite(action['multiplier']) or action['multiplier']<=0:raise ValueError('Неверный множитель урона')
+            if action.get('rule','') not in ('','eye','stance','move_close','move_far'):raise ValueError('Неизвестное правило способности')
+            action.setdefault('reaction',False)
             if not isinstance(action['reaction'],bool): raise ValueError('Неверный признак реакции')
             validate_tree(action, action_template(''))
             if not action_template('').keys() <= action.keys(): raise ValueError('Неполные данные действия')
@@ -1421,7 +1515,7 @@ def check_action_limit(data, source_token, reaction=False):
     source = participant(data, source_token)
     if any(e['kind']=='fear' for e in source.get('effects',[])):raise ValueError('Страх: персонаж не может действовать до окончания эффекта')
     if not data.get('combat_active') or reaction: return
-    limit = source.get('action_limit', 0)
+    limit = 2
     count = sum(entry['source'] == source_token and entry.get('counts', True) for entry in data.get('turn_actions', []))
     if limit and count >= limit: raise ValueError('Лимит действий этого хода исчерпан')
 
@@ -1441,6 +1535,8 @@ def action_damage_factor(target, action):
 def preview_action(data, source_token, action, token, critical=False, manual_amount=None):
     target=participant(data,token)
     amount=action_amount(participant(data,source_token),action,critical) if manual_amount is None else manual_amount
+    check_reach(data,source_token,action,token)
+    amount=round(amount*action.get('multiplier',1))
     count=action.get('extra_dice_count',0);sides=action.get('extra_dice_sides',0)
     values=[]
     for bonus in (count,count*sides):
@@ -1450,10 +1546,11 @@ def preview_action(data, source_token, action, token, critical=False, manual_amo
             result=apply_damage(copy,outgoing_damage(participant(data,source_token),amount+bonus,action['damage_type']),action['damage_type'],defense_factor=action_damage_factor(copy,action))
             loss+=result['hp_loss'];absorbed+=result['absorbed']
         values.append((loss,absorbed))
-    return dict(hp_min=values[0][0],hp_max=values[1][0],shield=values[0][1])
+    dodge=evasion_chance(target) if action['damage_type']=='Физический' else 0
+    return dict(hp_min=0 if dodge else values[0][0],hp_max=values[1][0],shield=values[0][1],dodge=dodge)
 
 
-def perform_action(data, source_token, action_id, victims, critical=False, reaction=False, manual_amount=None):
+def perform_action(data, source_token, action_id, victims, critical=False, reaction=False, manual_amount=None, simulation=False):
     # Execute on a copy so a missing target or invalid rule cannot partly spend resources.
     candidate = deepcopy(data)
     source = participant(candidate, source_token)
@@ -1464,11 +1561,18 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
     if action['cooldown_left'] or action['spent']: raise ValueError('Действие ещё не восстановилось')
     if action['charges_max'] and action['charges_left']==0: raise ValueError('Закончились заряды')
     if action['mana_cost']>source.get('mana_current',0): raise ValueError('Не хватает маны')
-    check_action_limit(candidate, source_token, reaction)
+    rule=action.get('rule','')
+    moving=rule in ('move_close','move_far')
+    check_action_limit(candidate, source_token, reaction or moving)
+    if moving and source.get('movement_used') and candidate['combat_active']:raise ValueError('Перемещение этого хода уже использовано')
+    if rule=='eye' and (not candidate['combat_active'] or source.get('eye_used')):raise ValueError('Десница Ока доступна один раз в текущем бою')
     if source[hp_fields(source)[0]] <= 0: raise ValueError('У действующего персонажа 0 HP')
     if not victims or len(victims) != len(set(victims)): raise ValueError('Выбери разные цели')
     if len(victims) > 20: raise ValueError('Слишком много целей')
     targets = [(token, participant(candidate, token)) for token in victims]
+    for token,_ in targets:check_reach(candidate,source_token,action,token)
+    if rule in ('eye','stance') and (len(targets)!=1 or targets[0][0]!=source_token):raise ValueError('Эта способность применяется только к себе')
+    if moving and (len(targets)!=1 or targets[0][0]==source_token):raise ValueError('Выбери другого участника для перемещения')
     amount = action_amount(source, action, critical)
     if manual_amount is not None:
         nonnegative_int(manual_amount, 'Ручная величина')
@@ -1481,6 +1585,7 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
         amount+=sum(rolls)
         messages.append(f"Дополнительный бросок: {rolls} = +{sum(rolls)}")
     if action['kind']=='damage':
+        amount=round(amount*action.get('multiplier',1))
         weakened=outgoing_damage(source,amount,action['damage_type'])
         if weakened!=amount:messages.append(f'Слабость: физический урон {amount} → {weakened} (−35%)')
         amount=weakened
@@ -1491,16 +1596,25 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
                 messages.append(f"{target['name']}: промах — невидимость")
                 continue
             for hit in range(action['hits']):
-                if target[hp_fields(target)[0]] <= 0: break
+                if target[hp_fields(target)[0]] <= 0 or source[hp_fields(source)[0]]<=0: break
+                if not simulation and action['damage_type']=='Физический' and random.random()<evasion_chance(target):
+                    messages.append(f"Попадание {hit+1}: {target['name']} уклонился");continue
                 result=apply_damage(target, amount, action['damage_type'],defense_factor=action_damage_factor(target,action))
                 messages.append(f"Попадание {hit+1}: " + damage_message(target['name'], result))
+                if not simulation and not reaction:messages.extend(counterattack(candidate,source_token,token,result))
         elif action['kind'] == 'heal':
             result=apply_healing(target, amount);messages.append(f"{target['name']}: +{result['restored']} HP")
         elif action['kind'] == 'shield':
             add_effect(target, dict(kind='shield',name=action['name'],value=amount,duration=action['duration'] or None,source=source_token), candidate['round'] if candidate['combat_active'] else 0)
             messages.append(f"{target['name']}: щит {amount}")
-        else: messages.append(f"{source['name']} → {target['name']}: {action['name']}")
-        if action['kind'] == 'note' or action['effect_kind'] != 'note':
+        else:
+            if moving:
+                candidate.setdefault('distances',{})['|'.join(sorted((source_token,token)))]= 'Ближняя' if rule=='move_close' else 'Дальняя'
+                source['movement_used']=True
+            elif rule=='eye':source['eye_used']=True;source['eye_damage_boost']=True
+            elif rule=='stance':source['defensive_stance']=True
+            messages.append(f"{source['name']} → {target['name']}: {action['name']}")
+        if not rule and (action['kind'] == 'note' or action['effect_kind'] != 'note'):
             kind=action['effect_kind']
             existing=[e for e in target['effects'] if e.get('source') == action['id']]
             if len(existing) < action['max_stacks']:
@@ -1513,7 +1627,7 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
     action['spent'] = action['manual_recharge']
     if action['charges_max']: action['charges_left']-=1
     if action['mana_cost']: source['mana_current']-=action['mana_cost']
-    record_turn_action(candidate, source_token, action['name'], ', '.join(t['name'] for _,t in targets), ' · '.join(messages), counts=not reaction)
+    record_turn_action(candidate, source_token, action['name'], ', '.join(t['name'] for _,t in targets), ' · '.join(messages), counts=not (reaction or moving))
     if candidate['combat_active']: refresh_turn_order(candidate)
     validate_action_state(candidate)
     data.clear();data.update(candidate)
@@ -1568,4 +1682,4 @@ def resolve_player_request(data,request_id,accept):
     return messages
 
 
-__all__ = ['shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']
+__all__ = ['distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']

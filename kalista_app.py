@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v21 · полный лист игрока
+Калиста Клиф — v22 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -328,6 +328,7 @@ def render_selected_spell(data, target):
     else:
         st.info(f"{target['name']}: статус «{spell['name']}»")
     can = data["hp_current"]>0 and data["mana_current"] >= spell["mana"] and spell.get("cd_left", 0) == 0
+    if data["combat_active"] and sum(x["source"]=="player" and x.get("counts",True) for x in data.get("turn_actions",[]))>=2:can=False
     if action == "shield": can = can and shield_amount > 0
     if action == "heal": can = can and raw > 0
     if action == "damage": can = can and target[hp_fields(target)[0]] > 0
@@ -420,6 +421,7 @@ def render_participant_editor(data, token):
             hp = c1.number_input("HP", min_value=0, value=target[hp_key])
             maximum = c2.number_input("Максимум HP", min_value=1, value=target[maximum_key], disabled=token == "player")
             armor = st.number_input("Броня без временных эффектов", min_value=0, value=target.get("armor", 0))
+            agility=st.number_input("Ловкость (для уклонения)",min_value=0,value=int(total_stat(target,"Ловкость") if token=="player" else target.get("sheet_profile",{}).get("stats",{}).get("Ловкость",target.get("agility",0))),disabled=token in ("player","ally"))
             attack = st.number_input("Урон атаки", min_value=0, value=float(target["sheet_profile"]["attack"]) if target.get("sheet_profile") else target.get("attack_damage", target.get("phys_attack", 0)))
             heal_amount = st.number_input("Сила лечения", min_value=0, value=target.get("heal_amount", 0), disabled=token == "player")
             use_mana = st.checkbox('Участник использует ману', value='mana_current' in target, disabled=token=='player')
@@ -444,6 +446,7 @@ def render_participant_editor(data, token):
                             data["resist_adjustments"][element] += resists[element] - data["resists"].get(element, 0)
                     else:
                         target["armor"] = armor; target["attack_damage"] = round(attack)
+                        if token not in ("player","ally"):target["agility"]=agility
                         if target.get("sheet_profile"): target["sheet_profile"]["attack"] = float(attack)
                         target["attack_type"] = attack_type; target["resists"] = resists
                         target["heal_amount"] = heal_amount
@@ -520,6 +523,7 @@ def render_party(data):
         if profile.get('reference'):
             with st.expander('Атаки из Long Story Short'):
                 for attack in profile['reference']['attacks']:
+                    if attack['name'].strip() in ('Когти','Кислотные брызги','Газовое облако'):continue
                     st.write('**'+attack['name']+'** · '+attack['formula'])
                     if attack['notes'].strip(): st.caption(readable_rules(attack['notes']))
                 st.caption('Бонус меча из JSON: +2 к атаке, +1d8 холода к урону. Эти формулы сохранены для справки; текущий урон берётся из Excel.')
@@ -572,6 +576,9 @@ def render_combatant_card(data, token, title, active=False):
     if "mana_current" in target: details.append(f"MP {target['mana_current']}/{target['mana_max']}")
     elif active: details.append(f"Атака {target.get('attack_damage', 0)} · {target.get('attack_type', 'Физический')}")
     if active and target.get("heal_amount", 0): details.append(f"Лечение {target['heal_amount']}")
+    if active: details.append(f"Уклонение {evasion_chance(target)*100:.1f}%")
+    if target.get("eye_damage_boost"):details.append("Десница Ока: урон ×2")
+    if target.get("defensive_stance"):details.append("Защитная стойка: урон −30%")
     if active: details.append(f"Инициатива {data.get('initiative_overrides', {}).get(token, target.get('initiative', 10))}")
     effects = [effect_lifetime(effect) for effect in target.get('effects', [])]
     if target is data and data.get('ten_invis'): effects.append(f"Невидимость: ещё {data['ten_invis_turn_starts_left']} начала хода")
@@ -662,6 +669,25 @@ def render_queue(data, token):
             log(f"{target['name']}: обычная инициатива восстановлена"); persist_and_rerun()
 
 
+def render_movement(data,source_token,target_token,player_mode=False):
+    source=participant(data,source_token)
+    if data['combat_active']:
+        used=sum(x['source']==source_token and x.get('counts',True) for x in data.get('turn_actions',[]))
+        st.caption(f'Действия: {max(0,2-used)}/2 · Перемещение: '+('использовано' if source.get('movement_used') else 'доступно'))
+    st.caption('Дистанция до цели: '+distance_between(data,source_token,target_token))
+    with st.expander('Перемещение (1 за ход)'):
+        cols=st.columns(2)
+        for index,rule in enumerate(('move_close','move_far')):
+            action=next((a for a in source.get('actions',[]) if a.get('rule')==rule),None)
+            if action and cols[index].button(action['name'],key=f'move_{source_token}_{rule}',disabled=source_token==target_token or (data['combat_active'] and source.get('movement_used',False))):
+                try:
+                    if player_mode:submit_player_action(data,action['id'],[target_token],False);st.success('Перемещение предложено ведущему')
+                    else:
+                        for message in perform_action(data,source_token,action['id'],[target_token]):log(message)
+                        persist_and_rerun('Перемещение')
+                except (ValueError,OSError) as exc:st.error(str(exc))
+
+
 def render_battle(data):
     render_battle_header(data)
     render_turn_context(data)
@@ -692,6 +718,7 @@ def render_battle(data):
                 token = remembered_select("Цель действия", tokens, f"turn_target_{active_token}", default=default,
                                           format_func=lambda value: participant_label(data, value))
                 render_combatant_card(data, token, "Цель")
+        render_movement(data,active_token,token)
         if active_token == "player": render_selected_spell(data, participant(data, token))
         else:
             with st.container(key="turn_action"):
@@ -933,6 +960,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     else: st.caption(f'Величина: {amount} · Попаданий: {action["hits"]} · Тип: {action["damage_type"]}')
     target_key=f'action_targets_{source_token}_{aid}'
     anchor_key=f'_action_target_anchor_{source_token}_{aid}'
+    if action.get('rule') in ('eye','stance'):victim_token=source_token
     initial=[victim_token] if action['kind']!='damage' or combat_side(data,victim_token)=='Враг' or combat_side(data,source_token)=='Враг' else []
     if not player_mode and st.session_state.get(anchor_key)!=victim_token:
         st.session_state[target_key]=[victim_token]
@@ -953,7 +981,10 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     for token in victims:
         target=participant(data,token)
         if action['kind']=='damage':
-            result=preview_action(data,source_token,action,token,critical,manual_amount)
+            st.caption('Дистанция: '+distance_between(data,source_token,token))
+            try:result=preview_action(data,source_token,action,token,critical,manual_amount)
+            except ValueError as exc:st.warning(str(exc));continue
+            if result.get('dodge'):st.caption(f"Уклонение цели: {result['dodge']*100:.1f}% на каждое попадание")
             loss=str(result['hp_min']) if result['hp_min']==result['hp_max'] else f"{result['hp_min']}–{result['hp_max']}"
             st.caption(f"{target['name']}: потеряет {loss} HP, щит поглотит {result['shield']}")
         elif action['kind']=='heal': st.caption(f"{target['name']}: +{min(amount if manual_amount is None else manual_amount,max(0,target[hp_fields(target)[1]]-target[hp_fields(target)[0]]))} HP")
@@ -962,6 +993,10 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     if action['charges_max']: st.caption(f"Заряды: {action['charges_left']}/{action['charges_max']}")
     if action['cooldown_left']: st.caption(f'Восстановится через {action["cooldown_left"]} начала хода этого участника')
     if action['spent']: st.caption('Нужна ручная перезарядка у ведущего')
+    if action.get('rule')=='eye' and (not data['combat_active'] or source.get('eye_used')):unavailable=True
+    if action.get('rule','').startswith('move_') and source.get('movement_used') and data['combat_active']:unavailable=True
+    used=sum(a['source']==source_token and a.get('counts',True) for a in data.get('turn_actions',[]))
+    if data['combat_active'] and used>=2 and not reaction and not action.get('rule','').startswith('move_'):unavailable=True
     if st.button('Предложить действие' if player_mode else 'Применить действие',key=f'perform_{source_token}_{aid}',type='primary',disabled=unavailable,use_container_width=True):
         try:
             if player_mode:
@@ -976,8 +1011,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
 def render_action_editor(data,token):
     target=participant(data,token)
     with st.expander('Настроить действия и лимит хода'):
-        limit=st.number_input('Лимит действий за ход (0 — ручное ведение)',min_value=0,max_value=20,value=target.get('action_limit',0),key=f'action_limit_{token}')
-        if st.button('Сохранить лимит',key=f'save_limit_{token}'): target['action_limit']=limit;persist_and_rerun('Лимит действий')
+        st.caption('У каждого участника 2 действия и 1 перемещение за ход. Контратака не расходует действия.')
         if not target['actions']:
             if st.button('Создать действия атаки и лечения',key=f'init_actions_{token}'):
                 target['actions']=[action_template('Атака',amount=target.get('attack_damage',0)),action_template('Лечение',kind='heal',amount=target.get('heal_amount',0))];persist_and_rerun()
@@ -993,6 +1027,7 @@ def render_action_editor(data,token):
                 shared=st.checkbox('Брать урон атаки из характеристик участника',action['shared_attack'])
                 hits=st.number_input('Попаданий',min_value=1,max_value=10,value=action['hits'])
                 dtype=st.selectbox('Тип урона',DAMAGE_TYPES,index=DAMAGE_TYPES.index(action['damage_type']))
+                reach=st.selectbox('Дальность атаки',['Ближняя','Дальняя','Любая'],index=['Ближняя','Дальняя','Любая'].index(action.get('reach','Ближняя')))
                 cooldown=st.number_input('Перезарядка: начала личного хода',min_value=0,value=action['cooldown'])
                 mana_cost=st.number_input('Стоимость маны (0 — без маны)',min_value=0,value=action['mana_cost'])
             with editor_tabs[1]:
@@ -1015,6 +1050,7 @@ def render_action_editor(data,token):
                 candidate=deepcopy(data);item=next(a for a in participant(candidate,token)['actions'] if a['id']==aid)
                 item.update(name=name,kind=kind,amount=amount,shared_attack=shared,hits=hits,damage_type=dtype,cooldown=cooldown,manual_recharge=manual,effect_kind=effect_kind,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,description=desc,needs_setup=not ready,mana_cost=mana_cost,charges_max=charges,charges_left=charges if charges!=action['charges_max'] else action['charges_left'],armor_penetration=penetration,extra_dice_count=dice_count,extra_dice_sides=dice_sides)
                 item['reaction']=reaction
+                item['reach']=reach
                 try:
                     validate_action_state(candidate);data.clear();data.update(candidate);persist_and_rerun('Настроено действие')
                 except ValueError as exc: st.error(str(exc))
@@ -1065,7 +1101,7 @@ def submit_player_action(data, aid, victims, critical):
     if action is None: raise ValueError('Действие изменилось; обнови экран')
     if latest['combat_active'] and actor_token(get_current_actor(latest))!='ally' and not action.get('reaction'): raise ValueError('Сейчас ход другого участника')
     # Validate by simulation; no game resources are consumed until the GM accepts.
-    perform_action(deepcopy(latest),'ally',aid,victims,critical)
+    perform_action(deepcopy(latest),'ally',aid,victims,critical,simulation=True)
     pending=[r for r in latest.get('player_requests',[]) if r['status']=='pending']
     if pending: raise ValueError('Предыдущее предложение ещё ожидает решения ведущего')
     latest.setdefault('player_requests',[]).append(dict(id=uuid4().hex,action_id=aid,action_name=action['name'],victims=victims,
@@ -1116,6 +1152,7 @@ def render_player():
     else:st.caption(section+' · HP '+str(public['ally']['hp'])+'/'+str(public['ally']['hp_max']))
     if section=='Бой':
         target=default_opponent(data,'ally')
+        render_movement(data,'ally',target,player_mode=True)
         render_action_panel(data,'ally',target,player_mode=True)
         for request in public['requests'][-3:]: st.caption(request['action_name']+' · '+request['message'])
     elif section=='Сцена':
@@ -1152,7 +1189,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 18:
+if data.get("schema_version", 5) < 19:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1253,6 +1290,7 @@ if page=="Обзор":
             m3,m4=st.columns(2)
             m3.metric("Инициатива",data["initiative"])
             m4.metric("Свободные очки",data["free_points"])
+            st.caption(f"Уклонение: {evasion_chance(data)*100:.1f}% от прямых физических атак")
     st.markdown("<div class='section-h'>Сопротивления</div>", unsafe_allow_html=True)
     render_stat_grid([(e,f"{effective_defense(data,e):g}%") for e in ELEMENTS], elements=True)
     st.caption("Сопротивления в процентах, максимум 95%. Расовая защита от Тьмы дополнительно снижает оставшийся урон на 10%.")

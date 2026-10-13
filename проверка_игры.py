@@ -27,11 +27,11 @@ try:e.perform_action(d,'ally',double['id'],['enemy:1','enemy:999'])
 except ValueError:pass
 else:raise AssertionError('Bad multi-target action accepted')
 assert d==bad
-d['ally']['action_limit']=1
+e.perform_action(d,'ally',double['id'],['enemy:2'])
 try:e.perform_action(d,'ally',double['id'],['enemy:2'])
 except ValueError:pass
 else:raise AssertionError('Action limit ignored')
-counter=next(a for a in d['ally']['actions'] if a['name']=='Совершенная контратака')
+counter=e.action_template('Проверочная реакция',shared_attack=True,reaction=True);d['ally']['actions'].append(counter)
 e.perform_action(d,'ally',counter['id'],['enemy:2'],reaction=True)
 assert not d['turn_actions'][-1]['counts']
 d['ally']['action_limit']=0
@@ -46,11 +46,13 @@ assert d==failed
 while d['round']==1:e.advance_turn(d)
 assert d['turn_actions']==[]
 # Configured armor stacks, delayed expiry, manual recharge and additional dice/penetration.
-acid=next(a for a in d['ally']['actions'] if a['name']=='Кислотные брызги');acid.update(needs_setup=False,amount=10,effect_kind='armor',effect_value=-2,duration=3,max_stacks=5)
-for _ in range(6):e.perform_action(d,'ally',acid['id'],['enemy:1'])
+acid=e.action_template('Проверочный эффект брони',amount=10,effect_kind='armor',effect_value=-2,duration=3,max_stacks=5);d['ally']['actions'].append(acid)
+for _ in range(6):
+ d['turn_actions']=[] # Independent turns for the effect stacking regression.
+ e.perform_action(d,'ally',acid['id'],['enemy:1'])
 assert len([x for x in d['enemies'][0]['effects'] if x['source']==acid['id']])==5
 assert e.effective_defense(d['enemies'][0],'Физический')==175
-special=next(a for a in d['ally']['actions'] if a['name']=='Десница Ока');special.update(needs_setup=False,amount=20,extra_dice_count=1,extra_dice_sides=6,armor_penetration=10)
+special=e.action_template('Проверочный удар',manual_recharge=True,amount=20,extra_dice_count=1,extra_dice_sides=6,armor_penetration=10);d['ally']['actions'].append(special);d['turn_actions']=[]
 result=e.preview_action(d,'ally',special,'enemy:2');before=d['enemies'][1]['hp'];e.perform_action(d,'ally',special['id'],['enemy:2']);assert result['hp_min']<=before-d['enemies'][1]['hp']<=result['hp_max']
 assert next(a for a in d['ally']['actions'] if a['id']==special['id'])['spent']
 # Prototype NPC abilities survive public battle copies, without any private field.
