@@ -1163,7 +1163,17 @@ def start_combat(data):
 
 def end_combat(data):
     data["combat_active"] = False
-    for _,target in participants(data):target['eye_damage_boost']=False;target['defensive_stance']=False;target['movement_used']=False
+    for _,target in participants(data):
+        target['eye_damage_boost']=False;target['defensive_stance']=False;target['movement_used']=False
+        target['effects']=[effect for effect in target.get('effects',[]) if effect['kind']!='shield']
+    fallen=[enemy for enemy in data['enemies'] if enemy['hp']<=0 and enemy.get('side','Враг')=='Враг']
+    if fallen:
+        data.setdefault('defeated_enemies',[]).extend(deepcopy(fallen))
+        data['enemies']=[enemy for enemy in data['enemies'] if enemy not in fallen]
+        tokens={t for t,_ in participants(data)}
+        data['distances']={key:value for key,value in data.get('distances',{}).items() if set(key.split('|'))<=tokens}
+        data['initiative_overrides']={key:value for key,value in data.get('initiative_overrides',{}).items() if key in tokens}
+        data['turn_excluded']=[key for key in data.get('turn_excluded',[]) if key in tokens]
     data["turn_order"] = []
     data["current_turn"] = 0
     data["player_turns_started"] = 0
@@ -1404,6 +1414,10 @@ def combat_side(data, token):
     if token == 'player': return 'Героиня'
     if token == 'ally': return 'Союзник'
     return participant(data, token).get('side', 'Враг')
+
+
+def visible_battle_participants(data):
+    return [(token,target) for token,target in participants(data) if not (token.startswith('enemy:') and target[hp_fields(target)[0]]<=0 and combat_side(data,token)=='Враг')]
 
 
 def default_opponent(data, source_token):
@@ -1757,4 +1771,4 @@ def resolve_player_request(data,request_id,accept):
     return messages
 
 
-__all__ = ['reach_label','ranged_miss_chance','kalista_dot_damage','distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']
+__all__ = ['visible_battle_participants','reach_label','ranged_miss_chance','kalista_dot_damage','distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']

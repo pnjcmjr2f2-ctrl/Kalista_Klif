@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v26 · полный лист игрока
+Калиста Клиф — v27 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -533,13 +533,6 @@ def render_party(data):
             st.markdown("<div class='section-h'>Способности</div>", unsafe_allow_html=True)
             for ability in profile['abilities'].splitlines():
                 if ability.strip(): st.markdown('- '+readable_rules(ability))
-        if profile.get('reference'):
-            with st.expander('Атаки из Long Story Short'):
-                for attack in profile['reference']['attacks']:
-                    if attack['name'].strip() in ('Когти','Кислотные брызги','Газовое облако'):continue
-                    st.write('**'+attack['name']+'** · '+attack['formula'])
-                    if attack['notes'].strip(): st.caption(readable_rules(attack['notes']))
-                st.caption('Бонус меча из JSON: +2 к атаке, +1d8 холода к урону. Эти формулы сохранены для справки; текущий урон берётся из Excel.')
         if profile['notes']:
             with st.expander('Связи и заметки'): st.markdown(profile['notes'])
         scene = scene_record(data, data['active_scene_id'])
@@ -718,7 +711,7 @@ def render_battle(data):
         if not entries: st.caption("Записей нет")
         st.download_button("Скачать журнал", "\n".join(reversed(data["combat_log"])), file_name="kalista_combat_log.txt", mime="text/plain")
         return
-    tokens = [token for token, _ in participants(data)]
+    tokens = [token for token, _ in visible_battle_participants(data)]
     if section == "Ход":
         if not active_token:
             active_token = remembered_select("Кто действует", tokens, "battle_manual_actor", default="player",
@@ -982,7 +975,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     if not player_mode and st.session_state.get(anchor_key)!=victim_token:
         st.session_state[target_key]=[victim_token]
         st.session_state[anchor_key]=victim_token
-    valid_tokens=[t for t,_ in participants(data)]
+    valid_tokens=[t for t,_ in visible_battle_participants(data)]
     if target_key in st.session_state:
         st.session_state[target_key]=[t for t in st.session_state[target_key] if t in valid_tokens]
     victims=st.multiselect('Цели',valid_tokens, default=initial if target_key not in st.session_state else None, format_func=lambda token: participant_label(data,token), key=target_key,placeholder='Выбери цели')
@@ -1375,6 +1368,8 @@ if page=="Обзор":
     st.caption("Сопротивления в процентах, максимум 95%. Расовая защита от Тьмы дополнительно снижает оставшийся урон на 10%.")
     st.markdown("<div class='section-h'>Характеристики</div>", unsafe_allow_html=True)
     render_stat_grid([(n,total_stat(data,n)) for n in ["Сила","Выносливость","Ловкость","Мудрость","Интеллект","Харизма","Дух"]])
+    total_xp=data['xp']+data['xp_to_next']
+    st.progress(min(1,max(0,data['xp']/max(1,total_xp))),text=f"Общий опыт: {data['xp']} / {total_xp} XP · до следующего уровня: {data['xp_to_next']}")
     st.markdown("<div class='section-h'>Опыт</div>", unsafe_allow_html=True)
     x1,x2,x3=st.columns([2,1,1])
     ax=x1.number_input("XP",0,value=100,step=50)

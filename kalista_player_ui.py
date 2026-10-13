@@ -60,6 +60,11 @@ def overview(data,root):
         try:st.image(p['portrait_url'],width=180)
         except Exception:st.caption('Портрет не загрузился')
     if a.get('mana_max'):st.progress(a['mana_current']/a['mana_max'],text=f"MP {a['mana_current']}/{a['mana_max']}")
+    xp_goal=p.get('xp_goal')
+    if p['xp_known'] and xp_goal and xp_goal>0:
+        st.progress(min(1,p['xp']/xp_goal),text=f"Общий опыт: {p['xp']} / {xp_goal} XP · до следующего уровня: {max(0,xp_goal-p['xp'])}")
+    else:
+        st.progress(0,text=f"Опыт: {p['xp']} XP · порог не задан" if p['xp_known'] else 'Опыт не заполнен · порог не задан')
     tiles([('Уровень',p['level']),('Атака',p['attack']),('Броня',a['armor']),('Уклонение',f"{e.evasion_chance(a)*100:.1f}%"),('Шанс крита',f"{p['critical_chance']:.2f}%"),('Критический урон',p['critical_damage']),('Свободные очки',p['free_points'])])
     with st.expander('Сопротивления и эффекты'):
         tiles([(key,str(value)+'%') for key,value in a['resists'].items()])
