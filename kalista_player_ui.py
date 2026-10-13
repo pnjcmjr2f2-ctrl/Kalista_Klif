@@ -5,8 +5,9 @@ from uuid import uuid4
 from html import escape
 import streamlit as st
 import kalista_engine as e
+from kalista_text import readable_rules
 from kalista_storage import read_state,write_state,StaleState
-from kalista_player_model import STATS,BONUSES,sheet_snapshot,edit_player_sheet,use_player_item,ensure_player_sheet
+from kalista_player_model import EQUIPMENT_SLOTS,ITEM_TYPES,STATS,BONUSES,sheet_snapshot,edit_player_sheet,use_player_item,ensure_player_sheet
 
 SECTIONS=['Обзор','Бой','Снаряжение','Инвентарь','Заклинания и способности','Характеристики','Квесты','Заметки','Биография','Кубики','Сцена']
 
@@ -87,25 +88,31 @@ def overview(data,root):
 
 def inventory(data,root):
     p=data['ally']['sheet_profile'];expected=baseline(data,'inventory')
-    money=p['currency'];tiles([('Золото',money['gold']),('Серебро',money['silver']),('Медь',money['copper'])])
-    with st.expander('Изменить деньги'):
-        with st.form('ps_money_form'):
-            currency={key:st.number_input(label,min_value=0,value=money[key],key='ps_money_'+key) for key,label in (('gold','Золото'),('silver','Серебро'),('copper','Медь'))}
-            if st.form_submit_button('Сохранить деньги'):commit(root,'inventory',dict(items=expected['items'],currency=currency),expected)
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Инвентарь</div>",unsafe_allow_html=True)
+    with st.form('ps_money_form'):
+        cols=st.columns(3)
+        currency={key:cols[i].number_input(label,min_value=0,value=p['currency'][key],key='ps_money_'+key) for i,(key,label) in enumerate((('gold','Золото'),('silver','Серебро'),('copper','Медь')))}
+        if st.form_submit_button('Сохранить деньги'):commit(root,'inventory',dict(items=expected['items'],currency=currency),expected)
     for item in p['inventory']:
-        with st.expander(f"{item['name']} × {item['qty']}"):
-            st.write(item['desc'] or item['type'])
-            if item['use']:
-                st.caption({'heal':'Лечение','mana':'Мана','shield':'Щит'}[item['use']['kind']]+' +'+str(item['use']['value']))
-                if st.button('Использовать',key='ps_use_'+item['id'],disabled=item['qty']<1):commit(root,'inventory',None,expected,item['id'])
-            item_form(data,root,item,expected)
+        cols=st.columns([3,1,1,1])
+        cols[0].markdown('**'+escape(item['name'])+'** · '+escape(item['type']))
+        cols[1].write('× '+str(item['qty']))
+        if item['desc']:cols[0].caption(item['desc'])
+        if item['use']:
+            cols[0].caption('Применение: '+{'heal':'лечение','mana':'восстановление маны','shield':'щит'}[item['use']['kind']]+' · '+str(item['use']['value']))
+            if cols[2].button('Применить',key='ps_use_'+item['id'],disabled=item['qty']<1 or item['use']['value']<=0):commit(root,'inventory',None,expected,item['id'])
+        if cols[3].button('🗑',key='ps_item_'+item['id']+'_delete',help='Удалить предмет'):
+            commit(root,'inventory',dict(items=[x for x in expected['items'] if x['id']!=item['id']],currency=expected['currency']),expected)
+        with st.expander('Свойства и действие предмета · '+item['name']):item_form(data,root,item,expected)
     with st.expander('Добавить предмет',expanded=not p['inventory']):item_form(data,root,None,expected)
+
 
 def item_form(data,root,item,expected):
     x=item or dict(id='new',name='',type='Предмет',qty=1,desc='',use=None);prefix='ps_item_'+x['id']
     with st.form(prefix):
         name=st.text_input('Название предмета',x['name'],key=prefix+'_name')
-        kind=st.text_input('Тип предмета',x['type'],key=prefix+'_type')
+        types=list(ITEM_TYPES)+( [x['type']] if x['type'] not in ITEM_TYPES else [])
+        kind=st.selectbox('Тип',types,index=types.index(x['type']),key=prefix+'_type')
         qty=st.number_input('Количество',min_value=0,value=x['qty'],key=prefix+'_qty')
         desc=st.text_area('Описание предмета',x['desc'],key=prefix+'_desc')
         use=st.selectbox('При использовании',['Нет','Лечение','Мана','Щит'],index=['Нет','heal','mana','shield'].index(x['use']['kind'] if x['use'] else 'Нет'),key=prefix+'_use')
@@ -114,29 +121,43 @@ def item_form(data,root,item,expected):
             new=dict(id=x['id'] if item else uuid4().hex,name=name,type=kind,qty=qty,desc=desc,use=None if use=='Нет' else dict(kind={'Лечение':'heal','Мана':'mana','Щит':'shield'}[use],value=value))
             items=[new if old['id']==x['id'] else old for old in expected['items']] if item else expected['items']+[new]
             commit(root,'inventory',dict(items=items,currency=expected['currency']),expected)
-    if item and st.button('Удалить предмет',key=prefix+'_delete'):commit(root,'inventory',dict(items=[old for old in expected['items'] if old['id']!=x['id']],currency=expected['currency']),expected)
 
 def equipment(data,root):
     p=data['ally']['sheet_profile'];expected=baseline(data,'equipment')
-    st.caption('Бонусы надетых вещей участвуют в формулах Excel. Снятые вещи остаются в резерве.')
-    for item in p['equipment']:
-        with st.expander(('Надето · ' if item['equipped'] else 'Резерв · ')+item['slot']+' · '+item['name']):
-            gear_form(root,item,expected)
-    with st.expander('Добавить снаряжение'):gear_form(root,None,expected)
+    st.markdown("<div class='main-title' style='font-size:1.6rem'>Экипировка</div>",unsafe_allow_html=True)
+    st.caption('Бонусы надетых вещей участвуют в характеристиках. Снятые вещи остаются в резерве. Сопротивления указаны в процентах; итог не выше 95%.')
+    for slot in EQUIPMENT_SLOTS:
+        items=[x for x in p['equipment'] if x['equipped'] and x['slot']==slot]
+        if not items:
+            with st.expander('▫️ '+slot+': —'):gear_form(root,None,expected,slot)
+        for item in items:
+            with st.expander('🔹 '+slot+': '+item['name']):gear_form(root,item,expected)
+    reserve=[x for x in p['equipment'] if not x['equipped'] or x['slot'] not in EQUIPMENT_SLOTS]
+    if reserve:st.markdown('**Резерв и другие ячейки**')
+    for item in reserve:
+        with st.expander(('🔹 ' if item['equipped'] else '▫️ ')+item['name']):gear_form(root,item,expected)
+    with st.expander('Добавить снаряжение в резерв'):gear_form(root,None,expected,'Резерв')
 
-def gear_form(root,item,expected):
-    x=item or dict(id='new',slot='',name='',description='',bonuses={},equipped=False);prefix='ps_gear_'+x['id']
+
+def gear_form(root,item,expected,default_slot="Резерв"):
+    x=item or dict(id='new_'+default_slot,slot=default_slot,name='',description='',bonuses={},equipped=default_slot!='Резерв');prefix='ps_gear_'+x['id']
     with st.form(prefix):
-        name=st.text_input('Предмет',x['name'],key=prefix+'_name');slot=st.text_input('Слот',x['slot'],key=prefix+'_slot')
+        name=st.text_input('Название',x['name'],key=prefix+'_name')
+        slots=list(EQUIPMENT_SLOTS)+['Резерв']+([x['slot']] if x['slot'] not in EQUIPMENT_SLOTS and x['slot']!='Резерв' else [])
+        slot=st.selectbox('Ячейка',slots,index=slots.index(x['slot']),key=prefix+'_slot')
         equipped=st.checkbox('Надето',x['equipped'],key=prefix+'_equipped')
         desc=st.text_area('Описание / свойства',x['description'],key=prefix+'_desc')
         st.caption('Введите только известные числовые бонусы. Особые свойства остаются в описании.')
         bonuses={}
-        for key in BONUSES:
+        columns=st.columns(4)
+        for index,key in enumerate(BONUSES):
             value=x['bonuses'].get(key,0)
             numeric=float(value) if key in ('Атака','Критический урон','Шанс крита') else int(value)
-            bonuses[key]=st.number_input('Бонус: '+key,value=numeric,key=prefix+'_'+key)
+            label=key+' (%)' if key in e.ELEMENTS or key=='Шанс крита' else key
+            bonuses[key]=columns[index%4].number_input(label,value=numeric,key=prefix+'_'+key)
         if st.form_submit_button('Сохранить снаряжение'):
+            if equipped and slot in EQUIPMENT_SLOTS and any(old['equipped'] and old['slot']==slot and old['id']!=x['id'] for old in expected):
+                st.error('Ячейка занята. Сначала сними текущий предмет или выбери другую ячейку.');return
             new=dict(id=x['id'] if item else uuid4().hex,slot=slot,name=name,description=desc,bonuses=bonuses,equipped=equipped)
             values=[new if old['id']==x['id'] else old for old in expected] if item else expected+[new]
             commit(root,'equipment',values,expected)
@@ -196,7 +217,7 @@ def abilities(data,root):
             values=deepcopy(expected);new=next(a for a in values if a['id']==aid)
             new.update(cooldown_left=0,spent=False,charges_left=new['charges_max']);commit(root,'actions',values,expected)
     with st.expander('Расовые и классовые свойства'):
-        st.write(data['ally']['sheet_profile']['abilities'])
+        st.write(readable_rules(data['ally']['sheet_profile']['abilities']))
     with st.expander('Добавить заклинание / способность'):action_form(root,None,expected)
 
 def action_form(root,action,expected):
@@ -206,12 +227,12 @@ def action_form(root,action,expected):
         types=['damage','heal','shield','note'];kind=st.selectbox('Действие',types,index=types.index(x['kind']),format_func=lambda v:dict(damage='Урон',heal='Лечение',shield='Щит',note='Статус')[v],key=prefix+'_kind')
         amount=st.number_input('Базовая величина',min_value=0,value=x['amount'],key=prefix+'_amount');shared=st.checkbox('Использовать атаку из характеристик',x['shared_attack'],key=prefix+'_shared')
         dtype=st.selectbox('Тип урона',e.DAMAGE_TYPES,index=e.DAMAGE_TYPES.index(x['damage_type']),key=prefix+'_dtype')
-        mana=st.number_input('Стоимость маны',min_value=0,value=x['mana_cost'],key=prefix+'_mana');cooldown=st.number_input('КД: начала личного хода',min_value=0,value=x['cooldown'],key=prefix+'_cd')
+        mana=st.number_input('Стоимость маны',min_value=0,value=x['mana_cost'],key=prefix+'_mana');cooldown=st.number_input('Перезарядка (личные ходы)',min_value=0,value=x['cooldown'],key=prefix+'_cd')
         hits=st.number_input('Попаданий',min_value=1,max_value=10,value=x['hits'],key=prefix+'_hits')
         effect=st.selectbox('Дополнительный эффект',list(e.EFFECT_KINDS),index=list(e.EFFECT_KINDS).index(x['effect_kind']),format_func=lambda v:e.EFFECT_KINDS[v],key=prefix+'_effect')
-        effect_value=st.number_input('Величина эффекта',value=x['effect_value'],key=prefix+'_ev');duration=st.number_input('Длительность: раунды / тики (0 — бессрочно)',min_value=0,value=x['duration'],key=prefix+'_dur')
+        effect_value=st.number_input('Величина эффекта',value=x['effect_value'],key=prefix+'_ev');duration=st.number_input('Длительность: раунды или срабатывания (0 — бессрочно)',min_value=0,value=x['duration'],key=prefix+'_dur')
         element=st.selectbox('Стихия эффекта',e.ELEMENTS,index=e.ELEMENTS.index(x['effect_element']),key=prefix+'_element')
-        stacks=st.number_input('Максимум стаков',min_value=1,max_value=20,value=x['max_stacks'],key=prefix+'_stacks')
+        stacks=st.number_input('Максимум наложений',min_value=1,max_value=20,value=x['max_stacks'],key=prefix+'_stacks')
         charges=st.number_input('Максимум зарядов (0 — без ограничения)',min_value=0,value=x['charges_max'],key=prefix+'_charges')
         left=st.number_input('Осталось зарядов',min_value=0,value=x['charges_left'],key=prefix+'_left')
         penetration=st.number_input('Вычесть из брони',min_value=0,value=x.get('armor_penetration',0),key=prefix+'_penetration')

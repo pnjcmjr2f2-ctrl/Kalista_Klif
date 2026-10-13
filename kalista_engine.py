@@ -320,6 +320,8 @@ def migrate(saved):
                          "resist_adjustments": {el: 0 for el in ELEMENTS},
                          "dots": [{"name": "", "damage": 0, "duration": 1, "element": ""}]})
     for spell in data["spells"]:
+        descriptions={'DoT 3 раунда':'Горение: шанс 50%, 18 урона, 3 срабатывания.','Слабость + DoT':'Проклятие: шанс 50%, 10 урона, 3 срабатывания. Слабость: шанс 35%, −35% физического урона на 2 хода.','Игнор части брони':'Чистый урон: игнорирует броню и сопротивления; щиты поглощают урон.','Шанс страха':'Страх: шанс 50% с учётом сопротивления контролю, пропуск 2 ходов.'}
+        if spell.get('desc') in descriptions:spell['desc']=descriptions[spell['desc']]
         if not {"id", "name", "base", "mana", "school"} <= spell.keys():
             raise ValueError("Неполные данные заклинания")
         if spell["mana"] < 0 or spell["base"] < 0 or spell["cd_max"] < 0 or spell["cd_left"] < 0:
@@ -615,12 +617,12 @@ def tick_mana_regeneration(data):
             and data["mana_max"] > 0 and data["mana_current"] * 5 < data["mana_max"]):
         ticks = 3
         data["mana_reserve_armed"] = False
-        messages.append("Магический резерв активирован: 3 усиленных тика")
+        messages.append("Магический резерв активирован: 3 усиленных восстановления")
     amount = round(data["mana_regen"] * 1.5) if ticks else data["mana_regen"]
     restored = restore_mana(data, amount)
     data["mana_reserve_ticks"] = max(0, ticks - 1)
     messages.append(f"Регенерация маны: +{restored} MP" +
-                    (f" · резерв: осталось {data['mana_reserve_ticks']} тика" if ticks else ""))
+                    (f" · резерв: оставшихся восстановлений — {data['mana_reserve_ticks']}" if ticks else ""))
     if ticks == 1:
         messages.append("Магический резерв завершён")
     return messages
@@ -1521,8 +1523,8 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
 def effect_lifetime(effect):
     duration=effect.get('duration')
     if duration is None: return effect['name']+' · бессрочно'
-    when='концов хода цели' if effect['kind'] in ('dot','hot','weakness','fear') else 'полных раундов'
-    return f"{effect['name']} · ещё {duration} {when}"
+    when='Осталось ходов цели' if effect['kind'] in ('dot','hot','weakness','fear') else 'Осталось полных раундов'
+    return f"{effect['name']} · {when}: {duration}"
 
 
 def public_player_state(data):

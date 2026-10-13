@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v19 · полный лист игрока
+Калиста Клиф — v20 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -22,6 +22,7 @@ import time
 from kalista_storage import read_state, write_state, StaleState
 from kalista_engine import *
 from kalista_theme import THEME
+from kalista_text import readable_rules
 from kalista_player_ui import render_section as render_player_sheet_section, SECTIONS as PLAYER_SECTIONS
 
 SAVE_FILE = Path(__file__).parent / "kalista_save.json"
@@ -304,7 +305,7 @@ def render_selected_spell(data, target):
     final_damage = 0
     if action == "damage":
         with st.expander("Крит и ручной урон", expanded=False):
-            crit_mode = remembered_select("Крит", ["Без крита", "Крит ведущего", "Бросок"], "battle_crit", default="Без крита")
+            crit_mode = remembered_select("Критический удар", ["Без крита", "Крит ведущего", "Бросок"], "battle_crit", default="Без крита")
             override = st.checkbox("Назначить итоговый урон вручную", key="battle_override")
             final_damage = st.number_input("Готовый урон (щит будет учтён)", min_value=0, value=0,
                                            disabled=not override, key="battle_final_damage")
@@ -515,12 +516,12 @@ def render_party(data):
         if profile['abilities']:
             st.markdown("<div class='section-h'>Способности</div>", unsafe_allow_html=True)
             for ability in profile['abilities'].splitlines():
-                if ability.strip(): st.markdown('- '+ability)
+                if ability.strip(): st.markdown('- '+readable_rules(ability))
         if profile.get('reference'):
             with st.expander('Атаки из Long Story Short'):
                 for attack in profile['reference']['attacks']:
                     st.write('**'+attack['name']+'** · '+attack['formula'])
-                    if attack['notes'].strip(): st.caption(attack['notes'])
+                    if attack['notes'].strip(): st.caption(readable_rules(attack['notes']))
                 st.caption('Бонус меча из JSON: +2 к атаке, +1d8 холода к урону. Эти формулы сохранены для справки; текущий урон берётся из Excel.')
         if profile['notes']:
             with st.expander('Связи и заметки'): st.markdown(profile['notes'])
@@ -529,18 +530,7 @@ def render_party(data):
             with st.expander('Текущая сцена', expanded=True): st.markdown(scene_player_text(data, scene['id']))
         st.caption('Полный лист доступен игроку с его отдельным ключом входа.')
     elif view == 'Снаряжение':
-        for item in profile['equipment']:
-            with st.expander(item['slot']+' · '+item['name'], expanded=True):
-                st.write(item['description'])
-                st.write(' · '.join(f'{k}: {v:+}' for k,v in item['bonuses'].items()))
-        if profile.get('equipment_note'):
-            st.markdown("<div class='section-h'>Снаряжение из Long Story Short</div>", unsafe_allow_html=True)
-            st.write(profile['equipment_note'])
-        if profile.get('reference'):
-            st.markdown("<div class='section-h'>Бездонная сумка</div>", unsafe_allow_html=True)
-            for item in profile['inventory']: st.write(f"{item['name']} × {item['qty']}")
-            coins = profile['currency']
-            st.caption(f"Монеты: {coins['gold']} золотых · {coins['silver']} серебряных · {coins['copper']} медных")
+        render_player_sheet_section('Снаряжение',data,SAVE_FILE.parent)
     else:
         with st.form('friend_identity'):
             name = st.text_input('Имя персонажа', ally['name'])
@@ -1013,7 +1003,7 @@ def render_action_editor(data,token):
             effect_value=st.number_input('Величина эффекта (для брони можно отрицательную)',value=action['effect_value'])
             duration=st.number_input('Длительность: раунды / тики (0 — бессрочно)',min_value=0,value=action['duration'])
             element=st.selectbox('Стихия эффекта',ELEMENTS,index=ELEMENTS.index(action['effect_element']))
-            stacks=st.number_input('Максимум стаков',min_value=1,max_value=20,value=action['max_stacks'])
+            stacks=st.number_input('Максимум наложений',min_value=1,max_value=20,value=action['max_stacks'])
             desc=st.text_area('Правила и условия',action['description'])
             ready=st.checkbox('Боевые числа и правила этого действия подтверждены',not action['needs_setup'])
             if st.form_submit_button('Сохранить действие'):
@@ -1127,7 +1117,7 @@ def render_player():
         else: st.caption('Ведущий ещё не начал сцену')
     else:render_player_sheet_section(section,data,SAVE_FILE.parent)
     if section=='Бой' and profile and profile['abilities']:
-        with st.expander('Правила способностей'):st.write(profile['abilities'])
+        with st.expander('Правила способностей'):st.write(readable_rules(profile['abilities']))
     st.caption('Экран обновляется каждые 3 секунды. Действия применяет ведущий после проверки.')
 
 
@@ -1251,11 +1241,11 @@ if page=="Обзор":
             with st.container(key='overview_mana'):
                 st.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0),text=f"MP {data['mana_current']}/{data['mana_max']}")
             m1,m2=st.columns(2)
-            m1.metric("Сила закл.",f"+{data['spell_power']*100:.0f}%")
+            m1.metric("Сила заклинаний",f"+{data['spell_power']*100:.0f}%")
             m2.metric("Броня",data["armor"])
             m3,m4=st.columns(2)
-            m3.metric("Иниц.",data["initiative"])
-            m4.metric("Очки",data["free_points"])
+            m3.metric("Инициатива",data["initiative"])
+            m4.metric("Свободные очки",data["free_points"])
     st.markdown("<div class='section-h'>Сопротивления</div>", unsafe_allow_html=True)
     render_stat_grid([(e,f"{effective_defense(data,e):g}%") for e in ELEMENTS], elements=True)
     st.caption("Сопротивления в процентах, максимум 95%. Расовая защита от Тьмы дополнительно снижает оставшийся урон на 10%.")
@@ -1287,13 +1277,13 @@ elif page=="Ведущий":
 elif page=="Экипировка":
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Экипировка</div>", unsafe_allow_html=True)
     for slot,it in data["equipment"].items():
-        with st.expander(f"{'🔹' if it.get('name') else '▫️'} {slot}: {it.get('name') or '—'}"):
-            it["name"]=st.text_input("Имя",it.get("name",""),key=f"n{slot}")
+        with st.expander(f"{'🔹' if it.get('name') else '▫️'} {slot.replace(' (посох)','')}: {it.get('name') or '—'}"):
+            it["name"]=st.text_input("Название",it.get("name",""),key=f"n{slot}")
             c=st.columns(4)
             it["armor"]=c[0].number_input("Броня",0,value=int(it.get("armor",0)),key=f"a{slot}")
             it["attack"]=c[1].number_input("Атака",0,value=int(it.get("attack",0)),key=f"t{slot}")
-            it["int"]=c[2].number_input("Инт",0,value=int(it.get("int",0)),key=f"i{slot}")
-            it["wis"]=c[3].number_input("Мудр",0,value=int(it.get("wis",0)),key=f"w{slot}")
+            it["int"]=c[2].number_input("Интеллект",0,value=int(it.get("int",0)),key=f"i{slot}")
+            it["wis"]=c[3].number_input("Мудрость",0,value=int(it.get("wis",0)),key=f"w{slot}")
             c2=st.columns(4)
             it["spi"]=c2[0].number_input("Дух",0,value=int(it.get("spi",0)),key=f"s{slot}")
             it["fire"]=c2[1].number_input("Огонь (%)",0,value=int(it.get("fire",0)),key=f"f{slot}")
@@ -1325,26 +1315,26 @@ elif page=="Характеристики":
                 persist_and_rerun()
         st.markdown("**Производные**")
         d1,d2,d3 = st.columns(3)
-        d1.metric("Сила закл.", f"+{data['spell_power']*100:.0f}%")
+        d1.metric("Сила заклинаний", f"+{data['spell_power']*100:.0f}%")
         d1.metric("Реген маны", data["mana_regen"])
         d2.metric("Сопр. контролю", f"{data.get('control_resist',0)*100:.1f}%")
         d2.metric("Инициатива", data["initiative"])
         d3.metric("Броня", data["armor"])
-        d3.metric("Крит", f"{effective_crit_chance(data)*100:.1f}%")
+        d3.metric("Критический удар", f"{effective_crit_chance(data)*100:.1f}%")
 
     with st.expander("Сопротивления стихиям"):
         rc = st.columns(6)
         for i, e in enumerate(ELEMENTS):
             rc[i].metric(e, str(effective_defense(data,e))+"%")
 
-    with st.expander("Пассивки (расовые и классовые)"):
+    with st.expander("Пассивные способности (расовые и классовые)"):
         for k, p in data["passives"].items():
             if p.get("type") in ("racial", "class"):
                 st.markdown(f"**{p['name']}** — {p['desc']}")
                 if k == "mana_reserve":
                     st.caption("Мана восстанавливается в конце полного раунда. Резерв проверяется до восстановления и усиливает три тика, даже после выхода выше 20%.")
                 if k == "shadow_child":
-                    st.caption("Текущий расчёт: +20 пунктов сопротивления с пределом 95; это сохранённая формула программы.")
+                    st.caption("Тень даёт +20 процентных пунктов сопротивления, максимум 95%, до начала третьего хода Калисты.")
 
     with st.expander("Особые умения"):
         for k, p in data["passives"].items():
@@ -1369,7 +1359,7 @@ elif page=="Инвентарь":
     for i,it in enumerate(data["inventory"]):
         cols=st.columns([3,1,1,1])
         cols[0].write(f"**{it['name']}** · {it['type']}")
-        it["qty"]=cols[1].number_input("Кол",0,value=it["qty"],key=f"q{i}",label_visibility="collapsed")
+        it["qty"]=cols[1].number_input("Количество",0,value=it["qty"],key=f"q{i}",label_visibility="collapsed")
         use = it.get("use")
         if use:
             cols[0].caption(f"Применение: { {'heal': 'лечение', 'mana': 'мана', 'shield': 'щит'}[use['kind']]} · {use['value']}")
@@ -1377,7 +1367,7 @@ elif page=="Инвентарь":
                 message = use_item(data, it)
                 log(message)
                 persist_and_rerun()
-        with st.expander(f"Действие предмета · {it['name']} · #{i + 1}"):
+        with st.expander(f"Свойства и действие предмета · {it['name']} · #{i + 1}"):
             with st.form(f"item_use_{i}"):
                 options = ["none", "heal", "mana", "shield"]
                 current = use["kind"] if use else "none"
@@ -1388,7 +1378,8 @@ elif page=="Инвентарь":
                 if st.form_submit_button("Сохранить действие"):
                     it["use"] = None if kind == "none" else {"kind": kind, "value": amount, "duration": duration}
                     persist_and_rerun()
-        if cols[3].button("🗑",key=f"x{i}"): data["inventory"].pop(i); persist_and_rerun()
+        if it.get("desc"): cols[0].caption(it["desc"])
+        if cols[3].button("🗑",key=f"x{i}",help="Удалить предмет"): data["inventory"].pop(i); persist_and_rerun()
     with st.form("ai"):
         st.markdown("**Добавить предмет**")
         nn = st.text_input("Название")
@@ -1402,7 +1393,7 @@ elif page=="Инвентарь":
 
 elif page=="Заклинания":
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Заклинания</div>", unsafe_allow_html=True)
-    st.caption("Кулдауны в раундах. 0 = без кулдауна. Каст — на странице «Бой».")
+    st.caption("Перезарядка указана в общих раундах. 0 — без перезарядки. Применение — на странице «Бой».")
 
     for i, sp in enumerate(list(data["spells"])):
         with st.expander(f"{sp.get('name','?')} (КД {sp.get('cd_max',0)})"):
@@ -1410,7 +1401,7 @@ elif page=="Заклинания":
             c1, c2, c3, c4 = st.columns(4)
             sp["base"] = c1.number_input("Базовый урон", min_value=0, value=int(sp.get("base",0) or 0), key=f"sb{sp['id']}")
             sp["mana"] = c2.number_input("Мана", min_value=0, value=int(sp.get("mana",0) or 0), key=f"sm{sp['id']}")
-            sp["cd_max"] = c3.number_input("Кулдаун", min_value=0, value=int(sp.get("cd_max",0) or 0), key=f"sc{sp['id']}")
+            sp["cd_max"] = c3.number_input("Перезарядка (раунды)", min_value=0, value=int(sp.get("cd_max",0) or 0), key=f"sc{sp['id']}")
             schools = ["Огонь", "Тьма", "Огонь+Тьма"]
             cur = sp.get("school", "Огонь")
             sp["school"] = c4.selectbox("Школа", schools, index=schools.index(cur) if cur in schools else 0, key=f"ss{sp['id']}")
@@ -1442,7 +1433,7 @@ elif page=="Заклинания":
         c1, c2, c3 = st.columns(3)
         sb = c1.number_input("Урон", min_value=0, value=50)
         sm = c2.number_input("Мана", min_value=0, value=30)
-        sc = c3.number_input("Кулдаун", min_value=0, value=0)
+        sc = c3.number_input("Перезарядка (раунды)", min_value=0, value=0)
         ss = st.selectbox("Школа", ["Огонь", "Тьма", "Огонь+Тьма"])
         sd = st.text_input("Описание")
         sg = st.selectbox("Даёт", [None, "pepel", "ten", "both"],
