@@ -43,7 +43,7 @@ before={x['id']:x['duration'] for x in t['effects']};e.tick_round_effects(t,100)
 assert before=={x['id']:x['duration'] for x in t['effects']}
 e.tick_periodic(t);assert {x['name']:x['duration'] for x in t['effects']}=={'Горение':2,'Проклятие':2,'Слабость':1,'Страх':1}
 e.tick_periodic(t);assert {x['name'] for x in t['effects']}=={'Горение','Проклятие'}
-t['effects']=[];t['control_resist']=.5
+t['effects']=[];t['fear_immunity_turns']=0;t['control_resist']=.5
 with patch.object(e.random,'random',side_effect=[.5,.5,.35,.25]):e.roll_spell_effects(d,soul,t)
 assert t['effects']==[]
 with patch.object(e.random,'random',side_effect=[.99,.99,.99,.249]):e.roll_spell_effects(d,soul,t)

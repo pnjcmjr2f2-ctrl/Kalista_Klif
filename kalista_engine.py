@@ -228,7 +228,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -339,7 +339,7 @@ def migrate(saved):
                          "resist_adjustments": {el: 0 for el in ELEMENTS},
                          "dots": [{"name": "", "damage": 0, "duration": 1, "element": ""}]})
     for spell in data["spells"]:
-        descriptions={'DoT 3 раунда':'Горение: шанс 50%, 18 урона, 3 срабатывания.','Слабость + DoT':'Проклятие: шанс 50%, 10 урона, 3 срабатывания. Слабость: шанс 35%, −35% физического урона на 2 хода.','Игнор части брони':'Чистый урон: игнорирует броню и сопротивления; щиты поглощают урон.','Шанс страха':'Страх: шанс 50% с учётом сопротивления контролю, пропуск 2 ходов.'}
+        descriptions={'DoT 3 раунда':'Горение: шанс 50%, 6% Интеллекта × (1 + сила заклинаний), 3 срабатывания.','Слабость + DoT':'Проклятие: шанс 50%, 4% Интеллекта × (1 + сила заклинаний), 3 срабатывания. Слабость: шанс 35%, −35% физического урона на 2 хода.','Игнор части брони':'Чистый урон: игнорирует броню и сопротивления; щиты поглощают урон.','Шанс страха':'Страх: шанс 50% с учётом сопротивления контролю, пропуск 2 ходов.'}
         if spell.get('desc') in descriptions:spell['desc']=descriptions[spell['desc']]
         if not {"id", "name", "base", "mana", "school"} <= spell.keys():
             raise ValueError("Неполные данные заклинания")
@@ -435,7 +435,17 @@ def migrate(saved):
     for enemy in data["enemies"]:
         if "side" in enemy and enemy["side"] not in ("Враг", "Союзник", "Нейтральный"):
             raise ValueError("Неизвестная сторона участника боя")
-    data["schema_version"] = 19
+    if saved.get('schema_version',5)<20:
+        invalidate_player_requests(data,'Правила эффектов обновлены; предложи действие заново')
+    for _,target in participants(data):
+        nonnegative_int(target.get('fear_immunity_turns',0),'Иммунитет к страху')
+    for spell in data['spells']:
+        if spell.get('dot',{}):
+            if spell['dot'].get('name') in ('Горение','Проклятие'):
+                kind='burn' if spell['dot']['name']=='Горение' else 'curse'
+                spell['dot']['damage']=kalista_dot_damage(data,kind)
+        spell['desc']=spell.get('desc','').replace('18 урона','6% Интеллекта × (1 + сила заклинаний)').replace('10 урона','4% Интеллекта × (1 + сила заклинаний)')
+    data["schema_version"] = 20
     return data
 
 
@@ -525,6 +535,8 @@ def validate_effect(effect):
 
 def add_effect(target, effect, round_number=0, stack=False):
     validate_effect(effect)
+    if effect["kind"] == "fear" and target.get("fear_immunity_turns", 0) > 0:
+        return None
     entry = deepcopy(effect)
     entry.setdefault("value", 0)
     entry.setdefault("duration", None)
@@ -657,10 +669,17 @@ def damage_message(name, result):
 def tick_periodic(target):
     """Каждый периодический эффект тикает один раз в конце хода цели."""
     messages = []
+    if target.get("fear_immunity_turns", 0) > 0:
+        target["fear_immunity_turns"] -= 1
+        if target["fear_immunity_turns"] == 0:
+            messages.append(f"Иммунитет к страху завершён: {target['name']}")
     for effect in list(target.get("effects", [])):
         if effect['kind'] in ('weakness','fear'):
             effect['duration']-=1
             if effect['duration']<=0:
+                if effect['kind']=='fear':
+                    target['fear_immunity_turns']=1
+                    messages.append(f"Иммунитет к страху: до конца следующего личного хода — {target['name']}")
                 target['effects']=[item for item in target['effects'] if item['id']!=effect['id']]
                 messages.append(f"«{effect['name']}» завершён: {target['name']}")
             continue
@@ -807,21 +826,31 @@ def outgoing_damage(source,amount,damage_type):
     return round(amount*.65) if damage_type=='Физический' and any(e['kind']=='weakness' for e in source.get('effects',[])) else amount
 
 
+def kalista_dot_damage(data, kind):
+    coefficient = {"burn": .06, "curse": .04}[kind]
+    return round(total_stat(data, "Интеллект") * (1 + data.get("spell_power", 0)) * coefficient)
+
+
 def roll_spell_effects(data,spell,target):
     if spell_action(spell)!='damage' or target[hp_fields(target)[0]]<=0:return []
     rolls=[]
     if 'Огонь' in spell['school']:
-        rolls.append(('dot','Горение',18,'Огонь',3,.5,'burn'))
+        rolls.append(('dot','Горение',kalista_dot_damage(data,'burn'),'Огонь',3,.5,'burn'))
     if 'Тьма' in spell['school']:
-        rolls.extend([('dot','Проклятие',10,'Тьма',3,.5,'curse'),('weakness','Слабость',35,'Тьма',2,.35,'weakness')])
+        rolls.extend([('dot','Проклятие',kalista_dot_damage(data,'curse'),'Тьма',3,.5,'curse'),('weakness','Слабость',35,'Тьма',2,.35,'weakness')])
     if spell['name'] in ('Разряд бездны','Пламя души'):
         chance=.5*(1-min(.9,max(0,target.get('control_resist',0))))
         rolls.append(('fear','Страх',0,'Тьма',2,chance,'fear'))
     messages=[]
     for kind,name,value,element,duration,chance,key in rolls:
+        if kind=="fear" and target.get("fear_immunity_turns",0)>0:
+            messages.append("Страх: цель защищена иммунитетом до конца следующего личного хода")
+            continue
         roll=random.random()
         if roll<chance:
             # All Kalista spells refresh this status rather than stacking it.
+            if kind=='dot':
+                value=max([value]+[e['value'] for e in target.get('effects',[]) if e['kind']==kind and e['name']==name and (e.get('source','').startswith('spell:') or e.get('source','').startswith('kalista:'))])
             target['effects']=[e for e in target.get('effects',[]) if not (e['kind']==kind and e['name']==name and (e.get('source','').startswith('spell:') or e.get('source','').startswith('kalista:')))]
             add_effect(target,dict(kind=kind,name=name,value=value,element=element,duration=duration,source='kalista:'+key),data['round'] if data['combat_active'] else 0)
             messages.append(f'{name}: наложено на {duration} хода цели (бросок {roll*100:.1f}% < {chance*100:.1f}%)')
@@ -1617,7 +1646,9 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
         if not rule and (action['kind'] == 'note' or action['effect_kind'] != 'note'):
             kind=action['effect_kind']
             existing=[e for e in target['effects'] if e.get('source') == action['id']]
-            if len(existing) < action['max_stacks']:
+            if kind=='fear' and target.get('fear_immunity_turns',0)>0:
+                messages.append(f"{target['name']}: страх не наложен — иммунитет")
+            elif len(existing) < action['max_stacks']:
                 add_effect(target, dict(kind=kind,name=action['name'],value=action['effect_value'],duration=action['duration'] or None,
                                        element=action['effect_element'],source=action['id'],desc=action['description']), candidate['round'] if candidate['combat_active'] else 0, stack=True)
                 messages.append(f"{target['name']}: эффект {action['name']}")
@@ -1682,4 +1713,4 @@ def resolve_player_request(data,request_id,accept):
     return messages
 
 
-__all__ = ['distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']
+__all__ = ['kalista_dot_damage','distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']

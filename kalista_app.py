@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v22 · полный лист игрока
+Калиста Клиф — v23 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -316,8 +316,8 @@ def render_selected_spell(data, target):
             st.info(damage_message(target["name"], preview) + (" · до броска крита" if crit_mode == "Бросок" and not override else ""))
             if target is data['ally'] or target is data:
                 st.warning('Выбрана дружественная цель: заклинание нанесёт ей урон.')
-        if 'Огонь' in spell['school']:st.caption('Горение: шанс 50% · 18 Огнём × 3 хода цели')
-        if 'Тьма' in spell['school']:st.caption('Проклятие: шанс 50% · 10 Тьмой × 3 хода; слабость: шанс 35% · −35% физического урона на 2 хода')
+        if 'Огонь' in spell['school']:st.caption(f"Горение: шанс 50% · {kalista_dot_damage(data,'burn')} Огнём × 3 хода цели; сила фиксируется при наложении")
+        if 'Тьма' in spell['school']:st.caption(f"Проклятие: шанс 50% · {kalista_dot_damage(data,'curse')} Тьмой × 3 хода; слабость: шанс 35% · −35% физического урона на 2 хода")
         if spell['name'] in ('Разряд бездны','Пламя души'):st.caption('Страх: шанс 50% × (1 − сопротивление контролю) · пропуск 2 ходов цели')
         if spell['school']=='Огонь+Тьма':st.caption('Прямой урон: 50% Огнём и 50% Тьмой; эффекты проверяются независимо.')
     elif action == "heal":
@@ -579,6 +579,7 @@ def render_combatant_card(data, token, title, active=False):
     if active: details.append(f"Уклонение {evasion_chance(target)*100:.1f}%")
     if target.get("eye_damage_boost"):details.append("Десница Ока: урон ×2")
     if target.get("defensive_stance"):details.append("Защитная стойка: урон −30%")
+    if target.get("fear_immunity_turns",0):details.append("Иммунитет к страху: до конца следующего личного хода")
     if active: details.append(f"Инициатива {data.get('initiative_overrides', {}).get(token, target.get('initiative', 10))}")
     effects = [effect_lifetime(effect) for effect in target.get('effects', [])]
     if target is data and data.get('ten_invis'): effects.append(f"Невидимость: ещё {data['ten_invis_turn_starts_left']} начала хода")
@@ -1189,7 +1190,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 19:
+if data.get("schema_version", 5) < 20:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
