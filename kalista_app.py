@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v23 · полный лист игрока
+Калиста Клиф — v24 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -282,9 +282,10 @@ def render_selected_spell(data, target):
     if not data["spells"]:
         st.info("Заклинаний пока нет. Добавь их на странице «Заклинания».")
         return
+    st.caption("⚔ Ближняя: только рядом. 🏹 Дальняя: при враге рядом шанс промаха 50%. ⚔ 🏹 Любая: обе дистанции без штрафа.")
     spells = {spell["id"]: spell for spell in data["spells"]}
     sid = remembered_select("Способность", list(spells), "battle_spell", default=data["spells"][0]["id"],
-                            format_func=lambda value: f"{spells[value]['name']} · {spells[value]['mana']} MP" +
+                            format_func=lambda value: f"{spells[value]['name']} · {reach_label(spells[value])} · {spells[value]['mana']} MP" +
                             (f" · КД {spells[value]['cd_left']}" if spells[value]['cd_left'] else ""))
     spell = spells[sid]
     action = spell_action(spell)
@@ -309,6 +310,10 @@ def render_selected_spell(data, target):
             override = st.checkbox("Назначить итоговый урон вручную", key="battle_override")
             final_damage = st.number_input("Готовый урон (щит будет учтён)", min_value=0, value=0,
                                            disabled=not override, key="battle_final_damage")
+        target_token=next((t for t,v in participants(data) if v is target),None)
+        if target_token:
+            if spell.get('reach')=='Ближняя' and distance_between(data,'player',target_token)!='Ближняя':st.warning('Ближнее заклинание: сначала сблизься с целью.')
+            if ranged_miss_chance(data,'player',spell,target_token):st.warning('Дальнее заклинание при враге рядом: 50% шанс промаха. При промахе урон и эффекты не накладываются.')
         dtype = "Огонь" if "Огонь" in spell["school"] else "Тьма"
         preview_raw = round(raw * 1.5) if crit_mode == "Крит ведущего" else raw
         if raw > 0:
@@ -949,7 +954,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
         source['actions']=[action_template('Атака',amount=source.get('attack_damage',0),shared_attack=True,damage_type=source.get('attack_type','Физический')),
                            action_template('Лечение',kind='heal',amount=source.get('heal_amount',0))]
     actions={a['id']:a for a in source['actions']}
-    aid=remembered_select('Действие', list(actions), f'action_choice_{source_token}', format_func=lambda value: actions[value]['name'])
+    aid=remembered_select('Действие', list(actions), f'action_choice_{source_token}', format_func=lambda value: actions[value]['name']+' · '+reach_label(actions[value]))
     action=actions[aid]
     st.caption(action['description'])
     if action['needs_setup']: st.warning('Для этого действия ведущему нужно задать боевые числа и подтвердить правила в редакторе действий.')
@@ -985,6 +990,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
             st.caption('Дистанция: '+distance_between(data,source_token,token))
             try:result=preview_action(data,source_token,action,token,critical,manual_amount)
             except ValueError as exc:st.warning(str(exc));continue
+            if result.get('miss'):st.warning('Дальняя атака при враге рядом: 50% шанс промаха за попадание.')
             if result.get('dodge'):st.caption(f"Уклонение цели: {result['dodge']*100:.1f}% на каждое попадание")
             loss=str(result['hp_min']) if result['hp_min']==result['hp_max'] else f"{result['hp_min']}–{result['hp_max']}"
             st.caption(f"{target['name']}: потеряет {loss} HP, щит поглотит {result['shield']}")
@@ -1190,7 +1196,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 20:
+if data.get("schema_version", 5) < 21:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1444,7 +1450,7 @@ elif page=="Заклинания":
     st.caption("Перезарядка указана в общих раундах. 0 — без перезарядки. Применение — на странице «Бой».")
 
     for i, sp in enumerate(list(data["spells"])):
-        with st.expander(f"{sp.get('name','?')} (КД {sp.get('cd_max',0)})"):
+        with st.expander(f"{sp.get('name','?')} · {reach_label(sp)} (КД {sp.get('cd_max',0)})"):
             sp["name"] = st.text_input("Название", sp.get("name",""), key=f"sn{sp['id']}")
             c1, c2, c3, c4 = st.columns(4)
             sp["base"] = c1.number_input("Базовый урон", min_value=0, value=int(sp.get("base",0) or 0), key=f"sb{sp['id']}")
@@ -1453,6 +1459,7 @@ elif page=="Заклинания":
             schools = ["Огонь", "Тьма", "Огонь+Тьма"]
             cur = sp.get("school", "Огонь")
             sp["school"] = c4.selectbox("Школа", schools, index=schools.index(cur) if cur in schools else 0, key=f"ss{sp['id']}")
+            sp["reach"] = st.selectbox("Дальность способности",["Ближняя","Дальняя","Любая"],index=["Ближняя","Дальняя","Любая"].index(sp.get("reach","Дальняя")),format_func=lambda v:reach_label({"reach":v}),key=f"sr{sp['id']}")
             sp["desc"] = st.text_input("Описание", sp.get("desc",""), key=f"sd{sp['id']}")
             actions = ["damage", "heal", "shield", "note"]
             sp["action"] = st.selectbox("Действие", actions, index=actions.index(spell_action(sp)),
@@ -1463,7 +1470,7 @@ elif page=="Заклинания":
             if sp["action"] in ("shield", "note"):
                 sp["effect_duration"] = st.number_input("Полных раундов (0 — бессрочно)", min_value=0,value=sp.get("effect_duration", 0), key=f"sed{sp['id']}")
             if sp['action']=='damage':
-                st.caption('Эффекты школы: горение 50% (18 × 3); проклятие 50% (10 × 3); слабость 35% (−35%, 2 хода). Повтор обновляет длительность.')
+                st.caption(f"Эффекты школы: горение 50% ({kalista_dot_damage(data,'burn')} × 3); проклятие 50% ({kalista_dot_damage(data,'curse')} × 3); слабость 35% (−35%, 2 хода). Повтор сохраняет более сильный ДоТ.")
                 if sp['name'] in ('Разряд бездны','Пламя души'):st.caption('Страх: 50% × (1 − сопротивление контролю), пропуск 2 ходов.')
 
             gives_opts = [None, "pepel", "ten", "both"]
@@ -1483,6 +1490,7 @@ elif page=="Заклинания":
         sm = c2.number_input("Мана", min_value=0, value=30)
         sc = c3.number_input("Перезарядка (раунды)", min_value=0, value=0)
         ss = st.selectbox("Школа", ["Огонь", "Тьма", "Огонь+Тьма"])
+        sr = st.selectbox("Дальность способности",["Ближняя","Дальняя","Любая"],index=1,format_func=lambda v:reach_label({"reach":v}))
         sd = st.text_input("Описание")
         sg = st.selectbox("Даёт", [None, "pepel", "ten", "both"],
             format_func=lambda x: {None:"Ничего","pepel":"Пепел","ten":"Тень","both":"Оба"}[x])
@@ -1490,7 +1498,7 @@ elif page=="Заклинания":
             nid = max((s.get("id",0) for s in data["spells"]), default=0) + 1
             data["spells"].append({
                 "id": nid, "name": sn.strip(), "base": sb, "mana": sm,
-                "school": ss, "desc": sd, "gives": sg,
+                "school": ss, "desc": sd, "gives": sg, "reach": sr,
                 "cd_max": sc, "cd_left": 0, "dot": None, "range": "Средняя"
             })
             persist_and_rerun()

@@ -210,9 +210,10 @@ def biography(data,root):
 def abilities(data,root):
     expected=baseline(data,'actions');actions=data['ally']['actions']
     if actions:
-        aid=st.selectbox('Мои способности',[a['id'] for a in actions],format_func=lambda v:next(a['name'] for a in actions if a['id']==v),key='ps_book_selection')
+        aid=st.selectbox('Мои способности',[a['id'] for a in actions],format_func=lambda v:next(a['name']+' · '+e.reach_label(a) for a in actions if a['id']==v),key='ps_book_selection')
         action=next(a for a in actions if a['id']==aid)
         st.write(action['description'])
+        st.caption(e.reach_label(action)+' · Ближняя — только рядом; Дальняя — 50% промаха при враге рядом; Любая — обе дистанции без штрафа.')
         st.caption(f"Мана {action['mana_cost']} · КД {action['cooldown_left']}/{action['cooldown']} · Заряды {action['charges_left']}/{action['charges_max']}")
         with st.expander('Редактировать способность'):action_form(root,action,expected)
         if st.button('Ручная перезарядка способности',key='ps_recharge_'+aid):
@@ -231,7 +232,7 @@ def action_form(root,action,expected):
             types=['damage','heal','shield','note'];kind=st.selectbox('Действие',types,index=types.index(x['kind']),format_func=lambda v:dict(damage='Урон',heal='Лечение',shield='Щит',note='Статус')[v],key=prefix+'_kind')
             amount=st.number_input('Базовая величина',min_value=0,value=x['amount'],key=prefix+'_amount');shared=st.checkbox('Использовать атаку из характеристик',x['shared_attack'],key=prefix+'_shared')
             dtype=st.selectbox('Тип урона',e.DAMAGE_TYPES,index=e.DAMAGE_TYPES.index(x['damage_type']),key=prefix+'_dtype')
-            reach=st.selectbox('Дальность атаки',['Ближняя','Дальняя','Любая'],index=['Ближняя','Дальняя','Любая'].index(x.get('reach','Ближняя')),key=prefix+'_reach')
+            reach=st.selectbox('Дальность атаки',['Ближняя','Дальняя','Любая'],index=['Ближняя','Дальняя','Любая'].index(x.get('reach','Ближняя')),format_func=lambda v:e.reach_label({'reach':v}),key=prefix+'_reach')
             mana=st.number_input('Стоимость маны',min_value=0,value=x['mana_cost'],key=prefix+'_mana');cooldown=st.number_input('Перезарядка (личные ходы)',min_value=0,value=x['cooldown'],key=prefix+'_cd')
             hits=st.number_input('Попаданий',min_value=1,max_value=10,value=x['hits'],key=prefix+'_hits')
         with editor_tabs[1]:

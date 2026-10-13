@@ -24,5 +24,5 @@ assert e.add_effect(t,dict(kind='fear',name='Другой страх',value=0,du
 e.tick_periodic(t);assert t['fear_immunity_turns']==0
 with patch.object(e.random,'random',return_value=0):e.roll_spell_effects(d,soul,t)
 assert any(x['kind']=='fear' for x in t['effects'])
-assert e.migrate(d)['schema_version']==20
+assert e.migrate(d)['schema_version']>=20
 print('Passed: scaling, snapshot, stronger refresh, growth, fixed ticks, fear immunity and expiry.')

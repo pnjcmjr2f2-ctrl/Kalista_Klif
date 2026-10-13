@@ -228,7 +228,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -316,6 +316,8 @@ def migrate(saved):
         spell.setdefault("cd_max", 0)
         spell.setdefault("cd_left", 0)
         spell.setdefault("dot", None)
+        spell.setdefault("reach", "Дальняя")
+        if spell["reach"] not in ("Ближняя","Дальняя","Любая"):raise ValueError("Неверная дальность заклинания")
     if len({sp["id"] for sp in data["spells"]}) != len(data["spells"]):
         raise ValueError("Повторяющиеся ID заклинаний")
     data.setdefault("dots", [])
@@ -435,7 +437,7 @@ def migrate(saved):
     for enemy in data["enemies"]:
         if "side" in enemy and enemy["side"] not in ("Враг", "Союзник", "Нейтральный"):
             raise ValueError("Неизвестная сторона участника боя")
-    if saved.get('schema_version',5)<20:
+    if saved.get('schema_version',5)<21:
         invalidate_player_requests(data,'Правила эффектов обновлены; предложи действие заново')
     for _,target in participants(data):
         nonnegative_int(target.get('fear_immunity_turns',0),'Иммунитет к страху')
@@ -445,7 +447,7 @@ def migrate(saved):
                 kind='burn' if spell['dot']['name']=='Горение' else 'curse'
                 spell['dot']['damage']=kalista_dot_damage(data,kind)
         spell['desc']=spell.get('desc','').replace('18 урона','6% Интеллекта × (1 + сила заклинаний)').replace('10 урона','4% Интеллекта × (1 + сила заклинаний)')
-    data["schema_version"] = 20
+    data["schema_version"] = 21
     return data
 
 
@@ -899,6 +901,9 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
     if action in ("heal", "shield", "damage"):
         if target is None:
             raise ValueError("Выбери цель")
+    target_token=next((t for t,v in participants(data) if v is target),None)
+    if action=='damage' and target_token:
+        check_reach(data,'player',dict(kind='damage',damage_type='Тьма',reach=spell.get('reach','Дальняя')),target_token)
     amount = spell["base"]
     if action == "shield":
         amount = shadow_shield_amount(data) if spell["name"]=="Покров тьмы" else (spell.get("effect_value", 0) if shield_amount is None else shield_amount)
@@ -938,14 +943,18 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
         data["soul_flame_boost"] = False
     messages = [f"«{spell['name']}» (−{spell['mana']} MP)" + (" · КРИТ" if crit and action == "damage" else "")]
     if target is not None and action == "damage":
-        if raw > 0:
+        missed=bool(target_token and ranged_miss_chance(data,'player',spell,target_token) and random.random()<.5)
+        if missed:
+            messages.append('Промах: дальнее заклинание в ближнем бою (шанс промаха 50%)')
+            if empowered:data['pepel_empower']=False
+        elif raw > 0:
             result=spell_damage_apply(data,spell,target,raw,final_damage)
             messages.append(damage_message(target['name'],result))
             target_token=next(t for t,v in participants(data) if v is target)
             messages.extend(counterattack(data,'player',target_token,result))
             if final_damage is not None:messages.append('Урон назначен ведущим; щит учтён')
             if empowered:data['pepel_empower']=False
-        messages.extend(roll_spell_effects(data,spell,target))
+        if not missed:messages.extend(roll_spell_effects(data,spell,target))
     elif action == "heal":
         result = apply_healing(target, amount)
         messages.append(f"{target['name']}: +{result['restored']} HP (избыток {result['excess']})")
@@ -1411,7 +1420,7 @@ def warrior_actions():
 
 
 def movement_actions():
-    return [action_template('Сближение',kind='note',rule='move_close',reach='Любая',description='Сблизиться с выбранной целью. Одно перемещение за ход, без расхода действий.'),action_template('Отступление',kind='note',rule='move_far',reach='Любая',description='Отойти от выбранной цели. Одно перемещение за ход, без расхода действий.')]
+    return [action_template('Сближение',kind='note',rule='move_close',reach='Любая',description='Сблизиться с выбранной целью. Одно перемещение за ход, без расхода действий.'),action_template('Отступление',kind='note',rule='move_far',reach='Любая',description='Отойти от всех целей рядом. Одно перемещение за ход, без расхода действий.')]
 
 
 def friend_actions():
@@ -1438,6 +1447,20 @@ def fill_warrior_equipment(ally):
 
 def distance_between(data,first,second):
     return data.get('distances',{}).get('|'.join(sorted((first,second))),'Дальняя' if 'player' in (first,second) and first!=second else 'Ближняя')
+
+
+def reach_label(ability):
+    reach=ability.get('reach','Ближняя' if ability.get('damage_type')=='Физический' else 'Дальняя')
+    return {'Ближняя':'⚔ Ближняя','Дальняя':'🏹 Дальняя','Любая':'⚔ 🏹 Любая'}[reach]
+
+
+def ranged_miss_chance(data,source_token,ability,target_token):
+    if not data.get('combat_active') or ability.get('reach','Ближняя' if ability.get('damage_type')=='Физический' else 'Дальняя')!='Дальняя':return 0.0
+    source_side=combat_side(data,source_token)
+    for token,target in participants(data):
+        if token!=source_token and (combat_side(data,token)=='Враг')!=(source_side=='Враг') and target[hp_fields(target)[0]]>0 and distance_between(data,source_token,token)=='Ближняя':
+            return .5
+    return 0.0
 
 
 def check_reach(data,source_token,action,target_token):
@@ -1507,6 +1530,7 @@ def validate_action_state(data):
             for field in ('mana_cost','charges_max','charges_left'): action.setdefault(field,0)
             for field in ('armor_penetration','extra_dice_count','extra_dice_sides'): action.setdefault(field,0)
             action.setdefault('reach','Ближняя' if action['damage_type']=='Физический' else 'Дальняя')
+            if action.get('rule')=='move_far':action['description']='Отойти от всех участников рядом. Одно перемещение за ход, без расхода действий.'
             action.setdefault('multiplier',1.0)
             if action['reach'] not in ('Ближняя','Дальняя','Любая'):raise ValueError('Неверная дальность атаки')
             if not isinstance(action['multiplier'],(int,float)) or not math.isfinite(action['multiplier']) or action['multiplier']<=0:raise ValueError('Неверный множитель урона')
@@ -1576,7 +1600,8 @@ def preview_action(data, source_token, action, token, critical=False, manual_amo
             loss+=result['hp_loss'];absorbed+=result['absorbed']
         values.append((loss,absorbed))
     dodge=evasion_chance(target) if action['damage_type']=='Физический' else 0
-    return dict(hp_min=0 if dodge else values[0][0],hp_max=values[1][0],shield=values[0][1],dodge=dodge)
+    miss=ranged_miss_chance(data,source_token,action,token) if action['kind']=='damage' else 0
+    return dict(hp_min=0 if dodge or miss else values[0][0],hp_max=values[1][0],shield=values[0][1],dodge=dodge,miss=miss)
 
 
 def perform_action(data, source_token, action_id, victims, critical=False, reaction=False, manual_amount=None, simulation=False):
@@ -1619,6 +1644,7 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
         if weakened!=amount:messages.append(f'Слабость: физический урон {amount} → {weakened} (−35%)')
         amount=weakened
     for token, target in targets:
+        landed=False
         if action['kind'] == 'damage':
             if target[hp_fields(target)[0]] <= 0: raise ValueError('У цели 0 HP')
             if target is candidate and candidate.get('ten_invis'):
@@ -1626,8 +1652,11 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
                 continue
             for hit in range(action['hits']):
                 if target[hp_fields(target)[0]] <= 0 or source[hp_fields(source)[0]]<=0: break
+                if not simulation and ranged_miss_chance(candidate,source_token,action,token) and random.random()<.5:
+                    messages.append(f'Попадание {hit+1}: промах — дальняя атака в ближнем бою (50%)');continue
                 if not simulation and action['damage_type']=='Физический' and random.random()<evasion_chance(target):
                     messages.append(f"Попадание {hit+1}: {target['name']} уклонился");continue
+                landed=True
                 result=apply_damage(target, amount, action['damage_type'],defense_factor=action_damage_factor(target,action))
                 messages.append(f"Попадание {hit+1}: " + damage_message(target['name'], result))
                 if not simulation and not reaction:messages.extend(counterattack(candidate,source_token,token,result))
@@ -1638,12 +1667,18 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
             messages.append(f"{target['name']}: щит {amount}")
         else:
             if moving:
-                candidate.setdefault('distances',{})['|'.join(sorted((source_token,token)))]= 'Ближняя' if rule=='move_close' else 'Дальняя'
+                if rule=='move_far':
+                    for other,_ in participants(candidate):
+                        if other!=source_token:
+                            candidate.setdefault('distances',{})['|'.join(sorted((source_token,other)))]= 'Дальняя'
+                    messages.append(f"{source['name']}: отступает от всех участников рядом")
+                else:
+                    candidate.setdefault('distances',{})['|'.join(sorted((source_token,token)))]= 'Ближняя'
                 source['movement_used']=True
             elif rule=='eye':source['eye_used']=True;source['eye_damage_boost']=True
             elif rule=='stance':source['defensive_stance']=True
             messages.append(f"{source['name']} → {target['name']}: {action['name']}")
-        if not rule and (action['kind'] == 'note' or action['effect_kind'] != 'note'):
+        if not rule and (action['kind']!='damage' or landed) and (action['kind'] == 'note' or action['effect_kind'] != 'note'):
             kind=action['effect_kind']
             existing=[e for e in target['effects'] if e.get('source') == action['id']]
             if kind=='fear' and target.get('fear_immunity_turns',0)>0:
@@ -1713,4 +1748,4 @@ def resolve_player_request(data,request_id,accept):
     return messages
 
 
-__all__ = ['kalista_dot_damage','distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']
+__all__ = ['reach_label','ranged_miss_chance','kalista_dot_damage','distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']
