@@ -4,6 +4,7 @@ from copy import deepcopy
 from uuid import uuid4
 from html import escape
 import streamlit as st
+from kalista_view import editing,player_view
 import kalista_engine as e
 from kalista_text import readable_rules
 from kalista_storage import read_state,write_state,StaleState
@@ -72,6 +73,7 @@ def overview(data,root):
         tiles([(key,str(value)+'%') for key,value in a['resists'].items()])
         for effect in a['effects']:st.write(e.effect_lifetime(effect))
         if a.get('fear_immunity_turns',0):st.write('Иммунитет к страху: до конца следующего личного хода')
+    if not editing():return
     with st.expander('HP и мана вручную'):
         expected=baseline(data,'resources')
         with st.form('ps_resources'):
@@ -299,6 +301,7 @@ def action_form(root,action,expected):
 def render_section(section,data,root):
     if not data['ally'].get('sheet_profile'):st.info('Ведущему нужно загрузить лист персонажа в «Отряде».');return
     refresh_button()
+    if player_view(section,data,root,commit):return
     if section=='Обзор':overview(data,root)
     elif section=='Снаряжение':equipment(data,root)
     elif section=='Инвентарь':inventory(data,root)

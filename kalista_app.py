@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v28 · полный лист игрока
+Калиста Клиф — v29 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
 import streamlit as st
+from kalista_view import editing,gm_view
 import json
 import random
 import os
@@ -88,6 +89,7 @@ def show_effect_summary(target):
 
 
 def render_quick_action(data, token):
+    if not editing():return
     target = participant(data, token)
     a1, a2 = st.columns(2)
     operation = a1.selectbox("Действие", ["Урон", "Лечение", "Мана", "Щит"], key="gm_action")
@@ -135,6 +137,7 @@ def render_quick_action(data, token):
 
 
 def render_effect_editor(data, token):
+    if not editing():return
     target = participant(data, token)
     st.markdown("**Эффекты выбранного участника**")
     st.caption("Урон и лечение: срабатывания в конце хода цели. Остальные: полные раунды; "
@@ -222,7 +225,7 @@ def undo_last_action():
     st.session_state.data = restored
     st.session_state["_committed_data"] = deepcopy(restored)
     # Иначе значения созданных ранее полей могут немедленно вернуть отменённое действие.
-    keep = {"data", "_committed_data", "_undo_history", "page", "battle_section", "gm_section", "_battle_preferences", "_save_revision", "_role"}
+    keep = {"data", "_committed_data", "_undo_history", "page", "battle_section", "gm_section", "_battle_preferences", "_save_revision", "_role", "_edit_mode"}
     for key in list(st.session_state):
         if key not in keep: del st.session_state[key]
     st.rerun()
@@ -306,11 +309,13 @@ def render_selected_spell(data, target):
     override = False
     final_damage = 0
     if action == "damage":
-        with st.expander("Крит и ручной урон", expanded=False):
+        with st.expander("Крит и ручной урон" if editing() else "Критический удар", expanded=False):
             crit_mode = remembered_select("Критический удар", ["Без крита", "Крит ведущего", "Бросок"], "battle_crit", default="Без крита")
-            override = st.checkbox("Назначить итоговый урон вручную", key="battle_override")
-            final_damage = st.number_input("Готовый урон (щит будет учтён)", min_value=0, value=0,
-                                           disabled=not override, key="battle_final_damage")
+            override = st.checkbox("Назначить итоговый урон вручную", key="battle_override") if editing() else False
+            if editing():
+                final_damage = st.number_input("Готовый урон (щит будет учтён)", min_value=0, value=0,
+                                               disabled=not override, key="battle_final_damage")
+
         target_token=next((t for t,v in participants(data) if v is target),None)
         if target_token:
             if spell.get('reach')=='Ближняя' and distance_between(data,'player',target_token)!='Ближняя':st.warning('Ближнее заклинание: сначала сблизься с целью.')
@@ -424,6 +429,7 @@ def render_selected_spell(data, target):
 
 
 def render_participant_editor(data, token):
+    if not editing():return
     target = participant(data, token)
     hp_key, maximum_key = hp_fields(target)
     with st.expander("Изменить характеристики участника", expanded=False):
@@ -501,6 +507,11 @@ def render_stat_grid(values, elements=False):
 
 
 def render_party(data):
+    if not editing():
+        render_combatant_card(data,'ally','Персонаж игрока',active=True)
+        selected=st.selectbox('Раздел листа',[x for x in PLAYER_SECTIONS if x not in ('Бой','Сцена')],key='party_sheet_section')
+        render_player_sheet_section(selected,data,SAVE_FILE.parent)
+        return
     st.markdown("<div class='main-title'>Отряд</div>", unsafe_allow_html=True)
     if st.button('Отменить последнее изменение', key='party_undo', disabled=not st.session_state.get('_undo_history')):
         undo_last_action()
@@ -607,6 +618,7 @@ def render_combatant_card(data, token, title, active=False):
 
 
 def render_new_enemy(data):
+    if not editing():return
     with st.expander("Добавить врага / подкрепление", expanded=False):
         with st.form("adden"):
             c1, c2 = st.columns(2)
@@ -628,6 +640,9 @@ def render_new_enemy(data):
 
 
 def render_queue(data, token):
+    if not editing():
+        for actor in data['turn_order']:st.write(actor['name'])
+        return
     target = participant(data, token)
     current = get_current_actor(data)
     if data["turn_order"]:
@@ -943,10 +958,7 @@ def render_turn_context(data):
     with st.expander(f'Этот ход · действий: {len(entries)-reactions} · реакций и усилений: {reactions}', expanded=bool(entries)):
         if not entries: st.caption('Действия ещё не применялись. Лимит по умолчанию не задан; его можно настроить для участника.')
         for entry in entries[-5:]: st.write(f"**{entry['name']} → {entry['target']}** · {entry['result']}")
-    with st.expander('Лимит действий Калисты'):
-        limit=st.number_input('Действий за ход (0 — ручное ведение)',min_value=0,max_value=20,value=data.get('action_limit',0),key='hero_action_limit')
-        if st.button('Сохранить лимит Калисты',key='save_hero_limit'):
-            data['action_limit']=limit;persist_and_rerun('Лимит Калисты')
+    st.caption('Два действия и одно перемещение за ход.')
 
 
 def render_action_panel(data, source_token, victim_token, player_mode=False):
@@ -984,7 +996,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     reaction=action.get('reaction',action['name']=='Совершенная контратака')
     if reaction: st.caption('Реакция: ведущий подтверждает, что по персонажу прошла ближняя атака.')
     manual_amount=None
-    if not player_mode and not critical and action['kind']!='note':
+    if editing() and not player_mode and not critical and action['kind']!='note':
         with st.expander('Ручная поправка этого действия'):
             override=st.checkbox('Назначить величину на это применение',key=f'action_override_{source_token}_{aid}')
             if override: manual_amount=st.number_input('Величина за попадание',min_value=0,value=amount,key=f'action_override_value_{source_token}_{aid}')
@@ -1036,6 +1048,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
 
 
 def render_action_editor(data,token):
+    if not editing():return
     target=participant(data,token)
     with st.expander('Настроить действия и лимит хода'):
         st.caption('У каждого участника 2 действия и 1 перемещение за ход. Контратака не расходует действия.')
@@ -1250,6 +1263,7 @@ if role == 'player':
     with st.sidebar:
         st.markdown("<div class='main-title' style='font-size:1.35rem'>✧ Шеогарат</div>",unsafe_allow_html=True)
         st.radio('Меню персонажа',PLAYER_SECTIONS,key='player_section',label_visibility='collapsed')
+        st.toggle('Режим редактирования',key='_edit_mode',help='Показывает поля настройки персонажа. Игровые действия доступны и без него.')
         st.divider()
         if st.button('Выйти', key='player_logout'):
             st.session_state.clear();st.rerun()
@@ -1308,32 +1322,42 @@ with st.sidebar:
     if st.button('Выйти', key='gm_logout'):
         st.session_state.clear();st.rerun()
     render_request_inbox()
+    st.toggle('Режим редактирования',key='_edit_mode',help='Показывает настройки персонажей, сцен и правил.')
     page=st.radio("Меню",["Обзор","Бой","Отряд","Экипировка","Характеристики","Инвентарь","Заклинания","Квесты","Ведущий","Кубики","Биография"],label_visibility="collapsed", key="page")
     st.divider()
-    if st.button("💾 Сохранить",use_container_width=True):
-        if save(data): st.success("Сохранено")
-    st.download_button("📥 Экспорт сохранения", json.dumps(data, ensure_ascii=False, indent=2),
-                       file_name="kalista_save.json", mime="application/json", use_container_width=True)
-    imported = st.file_uploader("Импорт сохранения", type=["json"])
-    if imported is not None and st.button("Применить импорт"):
-        try:
-            restored = migrate(json.loads(imported.getvalue().decode("utf-8-sig")))
-            recalc(restored)
+    if editing():
+        if st.button("💾 Сохранить",use_container_width=True):
+            if save(data): st.success("Сохранено")
+        st.download_button("📥 Экспорт сохранения", json.dumps(data, ensure_ascii=False, indent=2),
+                           file_name="kalista_save.json", mime="application/json", use_container_width=True)
+        imported = st.file_uploader("Импорт сохранения", type=["json"])
+        if imported is not None and st.button("Применить импорт"):
+            try:
+                restored = migrate(json.loads(imported.getvalue().decode("utf-8-sig")))
+                recalc(restored)
+                if save(restored):
+                    st.session_state.data = restored
+                    for key in list(st.session_state):
+                        if key not in ("data", "_role", "_save_revision"): del st.session_state[key]
+                    persist_and_rerun()
+            except (ValueError, TypeError, KeyError) as exc:
+                st.error(f"Импорт отменён: {exc}")
+        reset_confirm = st.checkbox("Подтверждаю сброс к исходной Калисте")
+        if st.button("🔄 Сброс",use_container_width=True, disabled=not reset_confirm):
+            restored = migrate(deepcopy(DEFAULT)); recalc(restored)
             if save(restored):
                 st.session_state.data = restored
                 for key in list(st.session_state):
                     if key not in ("data", "_role", "_save_revision"): del st.session_state[key]
                 persist_and_rerun()
-        except (ValueError, TypeError, KeyError) as exc:
-            st.error(f"Импорт отменён: {exc}")
-    reset_confirm = st.checkbox("Подтверждаю сброс к исходной Калисте")
-    if st.button("🔄 Сброс",use_container_width=True, disabled=not reset_confirm):
-        restored = migrate(deepcopy(DEFAULT)); recalc(restored)
-        if save(restored):
-            st.session_state.data = restored
-            for key in list(st.session_state):
-                if key not in ("data", "_role", "_save_revision"): del st.session_state[key]
-            persist_and_rerun()
+
+def apply_view_item(item):
+    log(use_item(data,item));persist_and_rerun('Применение предмета')
+
+def apply_view_special(key):
+    log(activate_special(data,key));persist_and_rerun('Особое умение')
+
+if gm_view(page,data,apply_view_item,apply_view_special):st.stop()
 
 # ===================== ОБЗОР =====================
 if page=="Обзор":
@@ -1372,14 +1396,15 @@ if page=="Обзор":
     data['xp_to_next']=max(0,total_xp-data['xp'])
     st.progress(1.0 if data['level']==MAX_LEVEL else min(1,max(0,data['xp']/max(1,total_xp))),text=f"Опыт уровня: {data['xp']} / {total_xp} XP · до следующего уровня: {data['xp_to_next']}")
     st.markdown("<div class='section-h'>Опыт</div>", unsafe_allow_html=True)
-    x1,x2,x3=st.columns([2,1,1])
-    ax=x1.number_input("XP",0,value=100,step=50)
-    if x2.button("➕ XP"): data["xp"]+=ax; data["xp_to_next"]=max(0,data["xp_to_next"]-ax); persist_and_rerun()
-    if x3.button("⬆ Ур.+1",disabled=data["level"]>=MAX_LEVEL):
-        data["xp"]=max(0,data["xp"]-xp_needed(data["level"])); data["level"]+=1; data["free_points"]+=4; data["xp_to_next"]=xp_needed(data["level"]); recalc(data); persist_and_rerun()
-
-    with st.expander("Настройки портрета", expanded=False):
-        data["portrait_url"] = st.text_input("URL своего портрета (пусто — портрет Калисты)", value=data.get("portrait_url", ""), key="portrait")
+    if editing():
+        x1,x2,x3=st.columns([2,1,1])
+        ax=x1.number_input("XP",0,value=100,step=50)
+        if x2.button("➕ XP"): data["xp"]+=ax; data["xp_to_next"]=max(0,data["xp_to_next"]-ax); persist_and_rerun()
+        if x3.button("⬆ Ур.+1",disabled=data["level"]>=MAX_LEVEL):
+            data["xp"]=max(0,data["xp"]-xp_needed(data["level"])); data["level"]+=1; data["free_points"]+=4; data["xp_to_next"]=xp_needed(data["level"]); recalc(data); persist_and_rerun()
+    
+        with st.expander("Настройки портрета", expanded=False):
+            data["portrait_url"] = st.text_input("URL своего портрета (пусто — портрет Калисты)", value=data.get("portrait_url", ""), key="portrait")
 
 # ===================== БОЙ =====================
 elif page=="Бой":

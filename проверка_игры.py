@@ -7,7 +7,7 @@ sys.path.insert(0,str(ROOT))
 import kalista_engine as e
 from kalista_storage import read_state,write_state,StaleState
 def gm_app(*args,**kwargs):
- app=AppTest.from_file(*args,**kwargs);app.secrets['access']={'gm_password':'test-gm','player_password':'test-player'};app.session_state['_role']='gm';return app
+ app=AppTest.from_file(*args,**kwargs);app.secrets['access']={'gm_password':'test-gm','player_password':'test-player'};app.session_state['_role']='gm';app.session_state['_edit_mode']=True;return app
 from streamlit.testing.v1 import AppTest
 
 def fresh():
