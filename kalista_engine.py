@@ -595,7 +595,7 @@ def damage_preview(target, amount, damage_type="Физический", final=Fal
     absorbed = 0 if bypass_shields else min(incoming, capacity)
     hp_key, _ = hp_fields(target)
     hp_loss = min(max(0, target[hp_key]), incoming - absorbed)
-    return {"incoming": incoming, "absorbed": absorbed, "hp_loss": hp_loss, "racial_reduction": racial_reduction,
+    return {"raw":amount,"damage_type":damage_type,"final":final,"stance":bool(apply_stance and target.get("defensive_stance")),"incoming": incoming, "absorbed": absorbed, "hp_loss": hp_loss, "racial_reduction": racial_reduction,
             "overkill": incoming - absorbed - hp_loss, "defense": defense,
             "hp_after": max(0, target[hp_key] - hp_loss)}
 
@@ -663,9 +663,13 @@ def tick_mana_regeneration(data):
 
 
 def damage_message(name, result):
-    return (f"{name}: после защиты {result['incoming']} · щит −{result['absorbed']} · "
-            f"HP −{result['hp_loss']} → {result['hp_after']}" +
-            (f" · защита от Тьмы −{result['racial_reduction']}" if result.get("racial_reduction") else ""))
+    detail=f"{result.get('raw',result['incoming'])} урона → после защиты {result['incoming']} → щит −{result['absorbed']} → HP −{result['hp_loss']} (осталось {result['hp_after']})"
+    if result.get('components_detail'):
+        detail=' + '.join(f"{x['element']}: {x['raw']:g} → {x['after']:g}" for x in result['components_detail'])+' → '+detail
+    if result.get('racial_reduction'):detail+=f" · защита от Тьмы −{result['racial_reduction']}"
+    if result.get('stance'):detail+=' · стойка −30% учтена'
+    if result.get('overkill'):detail+=f" · избыточный урон {result['overkill']}"
+    return name+': '+detail
 
 
 def tick_periodic(target):
@@ -866,6 +870,7 @@ def spell_damage_preview(data,spell,target,raw,final_damage=None):
     schools=['Огонь','Тьма'] if spell['school']=='Огонь+Тьма' else ['Огонь' if 'Огонь' in spell['school'] else 'Тьма']
     incoming=0.0
     racial_reduction=0.0
+    details=[]
     for element in schools:
         part=raw/len(schools)
         defense=effective_defense(target,element)
@@ -873,8 +878,11 @@ def spell_damage_preview(data,spell,target,raw,final_damage=None):
         reduced=max(0,part*(1-defense/100))
         if element=='Тьма' and 'dark_resist' in target.get('passives',{}):
             racial_reduction+=reduced*.1;reduced*=.9
+        details.append(dict(element=element,raw=part,after=round(reduced,2)))
         incoming+=reduced
     result=damage_preview(target,round(incoming),final=True)
+    result['raw']=raw
+    result['components_detail']=details
     result['racial_reduction']=round(racial_reduction)
     result['components']=[{'element':el,'share':1/len(schools)} for el in schools]
     return result
@@ -883,7 +891,8 @@ def spell_damage_preview(data,spell,target,raw,final_damage=None):
 def spell_damage_apply(data,spell,target,raw,final_damage=None):
     preview=spell_damage_preview(data,spell,target,raw,final_damage)
     result=apply_damage(target,preview['incoming'],final=True,apply_stance=False)
-    result['racial_reduction']=preview['racial_reduction']
+    for key in ('raw','components_detail','stance','racial_reduction'): 
+        if key in preview:result[key]=preview[key]
     return result
 
 

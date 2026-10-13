@@ -214,7 +214,7 @@ def attributes(data,root):
             resist={key:st.number_input('Базовое сопротивление: '+key,value=int(p['resist_adjustments'][key]),key='ps_resist_'+key) for key in a['resists']}
             if st.form_submit_button('Сохранить характеристики'):
                 values=deepcopy(expected);values.update(base_stats=base,level=level,free_points=points,formula_adjustments=adjust,resist_adjustments=resist);commit(root,'attributes',values,expected)
-    st.caption('HP = уровень×20 + выносливость×10; броня = 10 + выносливость×5; атака = бонус атаки оружия×(1 + сила/500). Крит = атака×2 + бонус; шанс = 5 + ловкость×0,05 + бонус, максимум 95%. Ручные поправки сохраняются.')
+    st.caption('HP = уровень×20 + выносливость×10; броня = 10 + выносливость×5 + бонусы надетых вещей; атака = бонус атаки оружия×(1 + сила/500). Крит = атака×2 + бонус; шанс = 5 + ловкость×0,05 + бонус, максимум 95%. Ручные поправки сохраняются.')
 
 def quests(data,root):
     expected=baseline(data,'quests')
@@ -247,14 +247,15 @@ def abilities(data,root):
         with st.expander(f"{action['name']} · {e.reach_label(action)} (КД {action['cooldown']})"):
             st.write(action['description'])
             st.caption(f"Мана {action['mana_cost']} · КД {action['cooldown_left']}/{action['cooldown']} · Заряды {action['charges_left']}/{action['charges_max']}")
-            action_form(root,action,expected)
+            with st.expander('Изменить способность'):
+                action_form(root,action,expected)
             if st.button('Ручная перезарядка способности',key='ps_recharge_'+action['id']):
                 values=deepcopy(expected);new=next(a for a in values if a['id']==action['id'])
                 new.update(cooldown_left=0,spent=False,charges_left=new['charges_max']);commit(root,'actions',values,expected)
     with st.expander('Расовые и классовые свойства'):
         st.write(readable_rules(data['ally']['sheet_profile']['abilities']))
-    st.markdown('**Новая способность**')
-    action_form(root,None,expected)
+    with st.expander('Добавить способность'):
+        action_form(root,None,expected)
 
 
 def action_form(root,action,expected):

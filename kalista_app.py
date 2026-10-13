@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v25 · полный лист игрока
+Калиста Клиф — v26 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -19,7 +19,7 @@ from copy import deepcopy
 import hmac
 import secrets
 import time
-from kalista_storage import read_state, write_state, StaleState
+from kalista_storage import read_state, write_state, StaleState, create_snapshot, list_snapshots, restore_snapshot
 from kalista_engine import *
 from kalista_theme import THEME
 from kalista_text import readable_rules
@@ -256,6 +256,7 @@ def render_battle_header(data):
         <span>{escape(data['name'])} · HP {data['hp_current']}/{data['hp_max']} · MP {data['mana_current']}/{data['mana_max']} · Щит {shield} · Пепел {data['pepel']}/5 · Тень {data['ten']}/5</span></div>""", unsafe_allow_html=True)
         b1, b2, b3, b4 = st.columns(4)
         if b1.button("Начать", disabled=data["combat_active"], key="battle_start", use_container_width=True):
+            create_snapshot(SAVE_FILE,"before-battle")
             for message in start_combat(data): log(message)
             persist_and_rerun("Начало боя")
         if b2.button("Завершить ход", disabled=not data["combat_active"] or not data["turn_order"], key="battle_next", use_container_width=True):
@@ -337,6 +338,13 @@ def render_selected_spell(data, target):
     if action == "shield": can = can and shield_amount > 0
     if action == "heal": can = can and raw > 0
     if action == "damage": can = can and target[hp_fields(target)[0]] > 0
+    blocked=[]
+    if action=='damage' and target_token:
+        try:check_reach(data,'player',dict(kind='damage',damage_type='Тьма',reach=spell.get('reach','Дальняя')),target_token)
+        except ValueError as exc:blocked.append(str(exc));can=False
+    if any(x['kind']=='fear' for x in data.get('effects',[])):blocked.append('Калиста под страхом');can=False
+    if data['combat_active'] and sum(x['source']=='player' and x.get('counts',True) for x in data.get('turn_actions',[]))>=2:blocked.append('действия закончились')
+    if blocked:st.caption('Недоступно: '+'; '.join(blocked))
     if st.button("Применить способность", key=f"cast_{sid}", disabled=not can, type="primary", use_container_width=True):
         chance = effective_crit_chance(data)
         crit = action == "damage" and not override and (crit_mode == "Крит ведущего" or (crit_mode == "Бросок" and random.random() < chance))
@@ -679,7 +687,7 @@ def render_movement(data,source_token,target_token,player_mode=False):
     source=participant(data,source_token)
     if data['combat_active']:
         used=sum(x['source']==source_token and x.get('counts',True) for x in data.get('turn_actions',[]))
-        st.caption(f'Действия: {max(0,2-used)}/2 · Перемещение: '+('использовано' if source.get('movement_used') else 'доступно'))
+        st.info(f'Действия: {max(0,2-used)}/2 · Перемещение: '+('использовано' if source.get('movement_used') else 'доступно'))
     st.caption('Дистанция до цели: '+distance_between(data,source_token,target_token))
     with st.expander('Перемещение (1 за ход)'):
         cols=st.columns(2)
@@ -1004,6 +1012,22 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     if action.get('rule','').startswith('move_') and source.get('movement_used') and data['combat_active']:unavailable=True
     used=sum(a['source']==source_token and a.get('counts',True) for a in data.get('turn_actions',[]))
     if data['combat_active'] and used>=2 and not reaction and not action.get('rule','').startswith('move_'):unavailable=True
+    reasons=[]
+    if source[hp_fields(source)[0]]<=0:reasons.append('у персонажа 0 HP');unavailable=True
+    if any(x['kind']=='fear' for x in source.get('effects',[])):reasons.append('персонаж под страхом');unavailable=True
+    if action['charges_max'] and action['charges_left']<=0:reasons.append('заряды закончились')
+    if action.get('rule')=='eye' and source.get('eye_used'):reasons.append('Десница уже использована в этом бою')
+    if action.get('rule','').startswith('move_') and source.get('movement_used') and data['combat_active']:reasons.append('перемещение использовано')
+    if action['needs_setup']:reasons.append('правила способности ещё не настроены')
+    if action['cooldown_left']>0:reasons.append(f"перезарядка: {action['cooldown_left']} хода")
+    if action['spent']:reasons.append('нужна ручная перезарядка')
+    if source.get('mana_current',0)<action['mana_cost']:reasons.append('не хватает маны')
+    if not victims:reasons.append('выбери цель')
+    if data['combat_active'] and used>=2 and not reaction and not action.get('rule','').startswith('move_'):reasons.append('действия закончились')
+    for token in victims:
+        try:check_reach(data,source_token,action,token)
+        except ValueError as exc:reasons.append(str(exc));unavailable=True
+    if reasons:st.caption('Недоступно: '+'; '.join(dict.fromkeys(reasons)))
     if st.button('Предложить действие' if player_mode else 'Применить действие',key=f'perform_{source_token}_{aid}',type='primary',disabled=unavailable,use_container_width=True):
         try:
             if player_mode:
@@ -1120,27 +1144,72 @@ def submit_player_action(data, aid, victims, critical):
 @st.fragment(run_every='3s')
 def render_request_inbox():
     latest,revision=read_state(SAVE_FILE)
-    if latest is None: return
+    if latest is None:return
+    latest=migrate(latest)
     pending=[r for r in latest.get('player_requests',[]) if r['status']=='pending']
-    if pending:st.info(f'Предложения игрока: {len(pending)}. Перед решением нажми «Обновить игру».')
-    elif revision!=st.session_state.get('_save_revision'):st.info('Игрок обновил лист или игра изменилась. Нажми «Обновить игру».')
+    if pending:st.info(f'Предложения игрока: {len(pending)}')
+    render_request_controls(latest,revision)
+    if revision!=st.session_state.get('_save_revision') and not pending:st.caption('Лист изменился. Обнови игру перед редактированием.')
 
 
-def render_request_controls(data):
+def render_request_controls(data,revision=None):
     for request in data.get('player_requests',[]):
-        if request['status']!='pending': continue
+        if request['status']!='pending':continue
         with st.container(border=True):
             st.write('**Игрок предлагает: '+request['action_name']+'**')
             st.caption('Цели: '+', '.join(participant_label(data,t) for t in request['victims'] if t in [token for token,_ in participants(data)]))
-            st.caption('Критический удар' if request['critical'] else 'Обычное применение')
             left,right=st.columns(2)
-            if left.button('Применить предложение',key='accept_'+request['id']):
+            accept=left.button('Применить предложение',key='accept_'+request['id'])
+            reject=right.button('Отклонить',key='reject_'+request['id'])
+            if accept or reject:
                 try:
-                    for message in resolve_player_request(data,request['id'],True): log(message)
-                    persist_and_rerun('Действие игрока')
-                except ValueError as exc: st.error(str(exc))
-            if right.button('Отклонить',key='reject_'+request['id']):
-                resolve_player_request(data,request['id'],False);persist_and_rerun('Отклонено предложение')
+                    previous=deepcopy(data)
+                    messages=resolve_player_request(data,request['id'],accept)
+                    for message in messages:data['combat_log'].insert(0,message)
+                    data['combat_log']=data['combat_log'][:80]
+                    new_revision=write_state(SAVE_FILE,data,revision,migrate)
+                    add_history(st.session_state.setdefault('_undo_history',[]),previous,data,'Действие игрока' if accept else 'Отклонено предложение')
+                    st.session_state['data']=data;st.session_state['_committed_data']=deepcopy(data);st.session_state['_save_revision']=new_revision
+                    st.rerun()
+                except (ValueError,OSError) as exc:st.error(str(exc))
+
+
+@st.fragment(run_every='3s')
+def render_live_battle():
+    latest,_=read_state(SAVE_FILE)
+    if latest is None:return
+    latest=migrate(latest)
+    if latest['combat_active']:
+        actor=get_current_actor(latest)
+        st.markdown(f"**Сейчас: раунд {latest['round']} · {actor['name'] if actor else 'нет участника'}**")
+        if actor:
+            token=actor_token(actor);target=participant(latest,token)
+            used=sum(x['source']==token and x.get('counts',True) for x in latest['turn_actions'])
+            st.caption(f"Действия {max(0,2-used)}/2 · Перемещение: {'использовано' if target.get('movement_used') else 'доступно'}")
+    cols=st.columns(2)
+    cols[0].metric(latest['name']+' · HP',f"{latest['hp_current']}/{latest['hp_max']}")
+    cols[1].metric(latest['ally']['name']+' · HP',f"{latest['ally']['hp']}/{latest['ally']['hp_max']}")
+    if latest['combat_log']:st.caption('Последнее: '+latest['combat_log'][0])
+
+
+def render_backups():
+    with st.expander('Снимки сохранений'):
+        st.caption('Последние 30 автоматических снимков и до 10 каждого ручного типа. Время в именах — UTC.')
+        if st.button('Создать снимок сейчас',key='snapshot_now'):
+            create_snapshot(SAVE_FILE);st.success('Снимок создан')
+        snapshots=list_snapshots(SAVE_FILE)
+        if snapshots:
+            name=st.selectbox('Сохранённый снимок',[p.name for p in snapshots],key='snapshot_choice')
+            st.download_button('Скачать снимок',(SAVE_FILE.parent/'save_snapshots'/name).read_bytes(),file_name=name,mime='application/json')
+            st.caption('Восстановление заменит текущую игру выбранным снимком. Текущая версия останется в автоматических снимках.')
+            if st.button('Восстановить выбранный снимок',key='snapshot_restore'):
+                try:
+                    restored=restore_snapshot(SAVE_FILE,name,st.session_state['_save_revision'],migrate)
+                    for key in list(st.session_state):
+                        if key!='_role':del st.session_state[key]
+                    st.rerun()
+                except (ValueError,OSError) as exc:st.error(str(exc))
+        else:st.caption('Снимков пока нет')
 
 
 @st.fragment(run_every='3s')
@@ -1315,7 +1384,7 @@ if page=="Обзор":
 
 # ===================== БОЙ =====================
 elif page=="Бой":
-    render_request_controls(data)
+    render_live_battle()
     render_battle(data)
 
 elif page=="Отряд":
@@ -1323,6 +1392,7 @@ elif page=="Отряд":
 
 # ===================== ЭКИПИРОВКА =====================
 elif page=="Ведущий":
+    render_backups()
     with st.container(key="gm_table"):
         render_gm(data)
 
@@ -1451,36 +1521,39 @@ elif page=="Заклинания":
 
     for i, sp in enumerate(list(data["spells"])):
         with st.expander(f"{sp.get('name','?')} · {reach_label(sp)} (КД {sp.get('cd_max',0)})"):
-            sp["name"] = st.text_input("Название", sp.get("name",""), key=f"sn{sp['id']}")
-            c1, c2, c3, c4 = st.columns(4)
-            sp["base"] = c1.number_input("Базовый урон", min_value=0, value=int(sp.get("base",0) or 0), key=f"sb{sp['id']}")
-            sp["mana"] = c2.number_input("Мана", min_value=0, value=int(sp.get("mana",0) or 0), key=f"sm{sp['id']}")
-            sp["cd_max"] = c3.number_input("Перезарядка (раунды)", min_value=0, value=int(sp.get("cd_max",0) or 0), key=f"sc{sp['id']}")
-            schools = ["Огонь", "Тьма", "Огонь+Тьма"]
-            cur = sp.get("school", "Огонь")
-            sp["school"] = c4.selectbox("Школа", schools, index=schools.index(cur) if cur in schools else 0, key=f"ss{sp['id']}")
-            sp["reach"] = st.selectbox("Дальность способности",["Ближняя","Дальняя","Любая"],index=["Ближняя","Дальняя","Любая"].index(sp.get("reach","Дальняя")),format_func=lambda v:reach_label({"reach":v}),key=f"sr{sp['id']}")
-            sp["desc"] = st.text_input("Описание", sp.get("desc",""), key=f"sd{sp['id']}")
-            actions = ["damage", "heal", "shield", "note"]
-            sp["action"] = st.selectbox("Действие", actions, index=actions.index(spell_action(sp)),
-                                        format_func=lambda v: {"damage": "Урон", "heal": "Лечение", "shield": "Щит", "note": "Статус / заметка"}[v], key=f"sa{sp['id']}")
-            if sp['name']=='Покров тьмы':st.caption(f'Расчётный щит: {shadow_shield_amount(data)} · Интеллект × (1 + сила заклинаний)')
-            elif sp["action"] in ("heal", "shield"):
-                sp["effect_value"] = st.number_input("Лечение / сила щита (без множителей)", min_value=0,value=sp.get("effect_value", 0), key=f"sev{sp['id']}")
-            if sp["action"] in ("shield", "note"):
-                sp["effect_duration"] = st.number_input("Полных раундов (0 — бессрочно)", min_value=0,value=sp.get("effect_duration", 0), key=f"sed{sp['id']}")
-            if sp['action']=='damage':
-                st.caption(f"Эффекты школы: горение 50% ({kalista_dot_damage(data,'burn')} × 3); проклятие 50% ({kalista_dot_damage(data,'curse')} × 3); слабость 35% (−35%, 2 хода). Повтор сохраняет более сильный ДоТ.")
-                if sp['name'] in ('Разряд бездны','Пламя души'):st.caption('Страх: 50% × (1 − сопротивление контролю), пропуск 2 ходов.')
-
-            gives_opts = [None, "pepel", "ten", "both"]
-            cur_g = sp.get("gives")
-            gi = gives_opts.index(cur_g) if cur_g in gives_opts else 0
-            sp["gives"] = st.selectbox("Даёт ресурс", gives_opts, index=gi,
-                format_func=lambda x: {None:"Ничего","pepel":"Пепел","ten":"Тень","both":"Оба"}[x], key=f"sg{sp['id']}")
-            if st.button("Удалить заклинание", key=f"sdel{sp['id']}"):
-                data["spells"].pop(i)
-                persist_and_rerun()
+            st.write(sp.get('desc',''))
+            st.caption(f"{reach_label(sp)} · Мана {sp['mana']} · Урон {sp['base']} · КД {sp.get('cd_left',0)}/{sp.get('cd_max',0)}")
+            with st.expander('Изменить заклинание'):
+                sp["name"] = st.text_input("Название", sp.get("name",""), key=f"sn{sp['id']}")
+                c1, c2, c3, c4 = st.columns(4)
+                sp["base"] = c1.number_input("Базовый урон", min_value=0, value=int(sp.get("base",0) or 0), key=f"sb{sp['id']}")
+                sp["mana"] = c2.number_input("Мана", min_value=0, value=int(sp.get("mana",0) or 0), key=f"sm{sp['id']}")
+                sp["cd_max"] = c3.number_input("Перезарядка (раунды)", min_value=0, value=int(sp.get("cd_max",0) or 0), key=f"sc{sp['id']}")
+                schools = ["Огонь", "Тьма", "Огонь+Тьма"]
+                cur = sp.get("school", "Огонь")
+                sp["school"] = c4.selectbox("Школа", schools, index=schools.index(cur) if cur in schools else 0, key=f"ss{sp['id']}")
+                sp["reach"] = st.selectbox("Дальность способности",["Ближняя","Дальняя","Любая"],index=["Ближняя","Дальняя","Любая"].index(sp.get("reach","Дальняя")),format_func=lambda v:reach_label({"reach":v}),key=f"sr{sp['id']}")
+                sp["desc"] = st.text_input("Описание", sp.get("desc",""), key=f"sd{sp['id']}")
+                actions = ["damage", "heal", "shield", "note"]
+                sp["action"] = st.selectbox("Действие", actions, index=actions.index(spell_action(sp)),
+                                            format_func=lambda v: {"damage": "Урон", "heal": "Лечение", "shield": "Щит", "note": "Статус / заметка"}[v], key=f"sa{sp['id']}")
+                if sp['name']=='Покров тьмы':st.caption(f'Расчётный щит: {shadow_shield_amount(data)} · Интеллект × (1 + сила заклинаний)')
+                elif sp["action"] in ("heal", "shield"):
+                    sp["effect_value"] = st.number_input("Лечение / сила щита (без множителей)", min_value=0,value=sp.get("effect_value", 0), key=f"sev{sp['id']}")
+                if sp["action"] in ("shield", "note"):
+                    sp["effect_duration"] = st.number_input("Полных раундов (0 — бессрочно)", min_value=0,value=sp.get("effect_duration", 0), key=f"sed{sp['id']}")
+                if sp['action']=='damage':
+                    st.caption(f"Эффекты школы: горение 50% ({kalista_dot_damage(data,'burn')} × 3); проклятие 50% ({kalista_dot_damage(data,'curse')} × 3); слабость 35% (−35%, 2 хода). Повтор сохраняет более сильный ДоТ.")
+                    if sp['name'] in ('Разряд бездны','Пламя души'):st.caption('Страх: 50% × (1 − сопротивление контролю), пропуск 2 ходов.')
+    
+                gives_opts = [None, "pepel", "ten", "both"]
+                cur_g = sp.get("gives")
+                gi = gives_opts.index(cur_g) if cur_g in gives_opts else 0
+                sp["gives"] = st.selectbox("Даёт ресурс", gives_opts, index=gi,
+                    format_func=lambda x: {None:"Ничего","pepel":"Пепел","ten":"Тень","both":"Оба"}[x], key=f"sg{sp['id']}")
+                if st.button("Удалить заклинание", key=f"sdel{sp['id']}"):
+                    data["spells"].pop(i)
+                    persist_and_rerun()
 
     with st.form("asp"):
         st.markdown("**Новое заклинание**")
