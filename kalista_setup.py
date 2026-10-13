@@ -3,6 +3,8 @@ from pathlib import Path
 import secrets
 import socket
 import tomllib
+import subprocess
+import sys
 
 root=Path(__file__).resolve().parent
 config=root/'.streamlit'/'secrets.toml'
@@ -15,9 +17,16 @@ if not config.exists():
 credentials=tomllib.loads(config.read_text(encoding='utf-8'))['access']
 gm=credentials['gm_password'];player=credentials['player_password']
 address='IP-компьютера'
+if sys.platform == 'darwin':
+    for interface in ('en0','en1'):
+        result=subprocess.run(['/usr/sbin/ipconfig','getifaddr',interface],capture_output=True,text=True)
+        if result.returncode==0 and result.stdout.strip():
+            address=result.stdout.strip()
+            break
 try:
-    with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as connection:
-        connection.connect(('192.0.2.1',80));address=connection.getsockname()[0]
+    if address=='IP-компьютера':
+        with socket.socket(socket.AF_INET,socket.SOCK_DGRAM) as connection:
+            connection.connect(('192.0.2.1',80));address=connection.getsockname()[0]
 except OSError: pass
 instructions=root/'Доступ-к-игре.txt'
 instructions.write_text(f'''Калиста — доступ к игровому столу
