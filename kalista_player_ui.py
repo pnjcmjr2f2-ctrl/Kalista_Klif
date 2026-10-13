@@ -240,7 +240,7 @@ def biography(data,root):
         if st.form_submit_button('Сохранить персонажа'):commit(root,'identity',values,expected)
 
 def abilities(data,root):
-    expected=baseline(data,'actions');actions=data['ally']['actions']
+    expected=baseline(data,'actions');actions=[a for a in data['ally']['actions'] if a.get('rule') not in ('move_close','move_far')]
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Заклинания и способности</div>",unsafe_allow_html=True)
     st.caption('Перезарядка указана в личных ходах. 0 — без перезарядки. Применение — на странице «Бой».')
     for action in actions:

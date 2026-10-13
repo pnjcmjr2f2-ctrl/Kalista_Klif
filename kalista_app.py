@@ -961,7 +961,10 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     if not source.get('actions'):
         source['actions']=[action_template('Атака',amount=source.get('attack_damage',0),shared_attack=True,damage_type=source.get('attack_type','Физический')),
                            action_template('Лечение',kind='heal',amount=source.get('heal_amount',0))]
-    actions={a['id']:a for a in source['actions']}
+    actions={a['id']:a for a in source['actions'] if a.get('rule') not in ('move_close','move_far')}
+    if not actions:
+        st.caption('Атакующих способностей пока нет. Перемещение доступно в отдельном блоке боя.')
+        return
     aid=remembered_select('Действие', list(actions), f'action_choice_{source_token}', format_func=lambda value: actions[value]['name']+' · '+reach_label(actions[value]))
     action=actions[aid]
     st.caption(action['description'])
