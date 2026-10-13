@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v20 · полный лист игрока
+Калиста Клиф — v21 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -985,27 +985,32 @@ def render_action_editor(data,token):
         aid=st.selectbox('Редактировать действие',[a['id'] for a in target['actions']],format_func=lambda value:next(a['name'] for a in target['actions'] if a['id']==value),key=f'edit_action_{token}')
         action=next(a for a in target['actions'] if a['id']==aid)
         with st.form(f'action_form_{token}_{aid}'):
-            name=st.text_input('Название действия',action['name'])
-            kind=st.selectbox('Результат',['damage','heal','shield','note'],index=['damage','heal','shield','note'].index(action['kind']),format_func=lambda v:dict(damage='Урон',heal='Лечение',shield='Щит',note='Статус')[v])
-            amount=st.number_input('Базовая величина',min_value=0,value=action['amount'])
-            shared=st.checkbox('Брать урон атаки из характеристик участника',action['shared_attack'])
-            hits=st.number_input('Попаданий',min_value=1,max_value=10,value=action['hits'])
-            dtype=st.selectbox('Тип урона',DAMAGE_TYPES,index=DAMAGE_TYPES.index(action['damage_type']))
-            cooldown=st.number_input('Перезарядка: начала личного хода',min_value=0,value=action['cooldown'])
-            mana_cost=st.number_input('Стоимость маны (0 — без маны)',min_value=0,value=action['mana_cost'])
-            charges=st.number_input('Зарядов (0 — без ограничения)',min_value=0,value=action['charges_max'])
-            penetration=st.number_input('Вычесть из брони цели перед физическим уроном',min_value=0,value=action.get('armor_penetration',0))
-            dice_count=st.number_input('Дополнительных кубиков урона',min_value=0,max_value=10,value=action.get('extra_dice_count',0))
-            dice_sides=st.number_input('Граней дополнительного кубика (0 — нет броска)',min_value=0,max_value=1000,value=action.get('extra_dice_sides',0))
-            manual=st.checkbox('После применения нужна ручная перезарядка',action['manual_recharge'])
-            reaction=st.checkbox('Реакция вне своего хода (не расходует лимит)',action.get('reaction',False))
-            effect_kind=st.selectbox('Дополнительный эффект',list(EFFECT_KINDS),index=list(EFFECT_KINDS).index(action['effect_kind']),format_func=lambda v:EFFECT_KINDS[v])
-            effect_value=st.number_input('Величина эффекта (для брони можно отрицательную)',value=action['effect_value'])
-            duration=st.number_input('Длительность: раунды / тики (0 — бессрочно)',min_value=0,value=action['duration'])
-            element=st.selectbox('Стихия эффекта',ELEMENTS,index=ELEMENTS.index(action['effect_element']))
-            stacks=st.number_input('Максимум наложений',min_value=1,max_value=20,value=action['max_stacks'])
-            desc=st.text_area('Правила и условия',action['description'])
-            ready=st.checkbox('Боевые числа и правила этого действия подтверждены',not action['needs_setup'])
+            editor_tabs=st.tabs(['Основное', 'Дополнительно', 'Эффекты', 'Правила'])
+            with editor_tabs[0]:
+                name=st.text_input('Название действия',action['name'])
+                kind=st.selectbox('Результат',['damage','heal','shield','note'],index=['damage','heal','shield','note'].index(action['kind']),format_func=lambda v:dict(damage='Урон',heal='Лечение',shield='Щит',note='Статус')[v])
+                amount=st.number_input('Базовая величина',min_value=0,value=action['amount'])
+                shared=st.checkbox('Брать урон атаки из характеристик участника',action['shared_attack'])
+                hits=st.number_input('Попаданий',min_value=1,max_value=10,value=action['hits'])
+                dtype=st.selectbox('Тип урона',DAMAGE_TYPES,index=DAMAGE_TYPES.index(action['damage_type']))
+                cooldown=st.number_input('Перезарядка: начала личного хода',min_value=0,value=action['cooldown'])
+                mana_cost=st.number_input('Стоимость маны (0 — без маны)',min_value=0,value=action['mana_cost'])
+            with editor_tabs[1]:
+                charges=st.number_input('Зарядов (0 — без ограничения)',min_value=0,value=action['charges_max'])
+                penetration=st.number_input('Вычесть из брони цели перед физическим уроном',min_value=0,value=action.get('armor_penetration',0))
+                dice_count=st.number_input('Дополнительных кубиков урона',min_value=0,max_value=10,value=action.get('extra_dice_count',0))
+                dice_sides=st.number_input('Граней дополнительного кубика (0 — нет броска)',min_value=0,max_value=1000,value=action.get('extra_dice_sides',0))
+                manual=st.checkbox('После применения нужна ручная перезарядка',action['manual_recharge'])
+                reaction=st.checkbox('Реакция вне своего хода (не расходует лимит)',action.get('reaction',False))
+            with editor_tabs[2]:
+                effect_kind=st.selectbox('Дополнительный эффект',list(EFFECT_KINDS),index=list(EFFECT_KINDS).index(action['effect_kind']),format_func=lambda v:EFFECT_KINDS[v])
+                effect_value=st.number_input('Величина эффекта (для брони можно отрицательную)',value=action['effect_value'])
+                duration=st.number_input('Длительность: раунды / тики (0 — бессрочно)',min_value=0,value=action['duration'])
+                element=st.selectbox('Стихия эффекта',ELEMENTS,index=ELEMENTS.index(action['effect_element']))
+                stacks=st.number_input('Максимум наложений',min_value=1,max_value=20,value=action['max_stacks'])
+            with editor_tabs[3]:
+                desc=st.text_area('Правила и условия',action['description'])
+                ready=st.checkbox('Боевые числа и правила этого действия подтверждены',not action['needs_setup'])
             if st.form_submit_button('Сохранить действие'):
                 candidate=deepcopy(data);item=next(a for a in participant(candidate,token)['actions'] if a['id']==aid)
                 item.update(name=name,kind=kind,amount=amount,shared_attack=shared,hits=hits,damage_type=dtype,cooldown=cooldown,manual_recharge=manual,effect_kind=effect_kind,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,description=desc,needs_setup=not ready,mana_cost=mana_cost,charges_max=charges,charges_left=charges if charges!=action['charges_max'] else action['charges_left'],armor_penetration=penetration,extra_dice_count=dice_count,extra_dice_sides=dice_sides)
@@ -1106,8 +1111,9 @@ def render_player():
     if public['combat_active']:
         current=public['turn_order'][public['current_turn']] if public['turn_order'] else None
         st.info(f"Раунд {public['round']} · Ход: {current['name'] if current else 'нет участников'}")
-    render_combatant_card(data,'ally','Твой персонаж',active=True)
     section=st.session_state.get('player_section','Обзор')
+    if section in ('Обзор','Бой'):render_combatant_card(data,'ally','Твой персонаж',active=True)
+    else:st.caption(section+' · HP '+str(public['ally']['hp'])+'/'+str(public['ally']['hp_max']))
     if section=='Бой':
         target=default_opponent(data,'ally')
         render_action_panel(data,'ally',target,player_mode=True)
@@ -1118,7 +1124,8 @@ def render_player():
     else:render_player_sheet_section(section,data,SAVE_FILE.parent)
     if section=='Бой' and profile and profile['abilities']:
         with st.expander('Правила способностей'):st.write(readable_rules(profile['abilities']))
-    st.caption('Экран обновляется каждые 3 секунды. Действия применяет ведущий после проверки.')
+    if section=='Бой':st.caption('Предложение действия отправляется ведущему на проверку.')
+    elif section not in ('Сцена','Кубики'):st.caption('Изменения листа сохраняются кнопками в формах.')
 
 
 # ===================== INIT =====================
@@ -1352,21 +1359,25 @@ elif page=="Характеристики":
 
 elif page=="Инвентарь":
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Инвентарь</div>", unsafe_allow_html=True)
-    g,s,c=st.columns(3)
-    data["gold"]=g.number_input("Золото",0,value=data["gold"])
-    data["silver"]=s.number_input("Серебро",0,value=data["silver"])
-    data["copper"]=c.number_input("Медь",0,value=data["copper"])
+    with st.container(key='inventory_money_gm'):
+        g,s,c=st.columns(3)
+        data["gold"]=g.number_input("Золото",0,value=data["gold"])
+        data["silver"]=s.number_input("Серебро",0,value=data["silver"])
+        data["copper"]=c.number_input("Медь",0,value=data["copper"])
     for i,it in enumerate(data["inventory"]):
-        cols=st.columns([3,1,1,1])
-        cols[0].write(f"**{it['name']}** · {it['type']}")
-        it["qty"]=cols[1].number_input("Количество",0,value=it["qty"],key=f"q{i}",label_visibility="collapsed")
-        use = it.get("use")
-        if use:
-            cols[0].caption(f"Применение: { {'heal': 'лечение', 'mana': 'мана', 'shield': 'щит'}[use['kind']]} · {use['value']}")
-            if cols[2].button("Применить", key=f"use_item_{i}", disabled=it["qty"] <= 0 or use["value"] <= 0):
-                message = use_item(data, it)
-                log(message)
-                persist_and_rerun()
+        with st.container(key=f'inventory_row_gm_{i}'):
+            cols=st.columns([3,1,1,1])
+            cols[0].write(f"**{it['name']}** · {it['type']}")
+            it["qty"]=cols[1].number_input("Количество",0,value=it["qty"],key=f"q{i}",label_visibility="collapsed")
+            use = it.get("use")
+            if use:
+                cols[0].caption(f"Применение: { {'heal': 'лечение', 'mana': 'мана', 'shield': 'щит'}[use['kind']]} · {use['value']}")
+                if cols[2].button("Применить", key=f"use_item_{i}", disabled=it["qty"] <= 0 or use["value"] <= 0):
+                    message = use_item(data, it)
+                    log(message)
+                    persist_and_rerun()
+            if it.get("desc"): cols[0].caption(it["desc"])
+            if cols[3].button("🗑",key=f"x{i}",help="Удалить предмет"): data["inventory"].pop(i); persist_and_rerun()
         with st.expander(f"Свойства и действие предмета · {it['name']} · #{i + 1}"):
             with st.form(f"item_use_{i}"):
                 options = ["none", "heal", "mana", "shield"]
@@ -1378,8 +1389,6 @@ elif page=="Инвентарь":
                 if st.form_submit_button("Сохранить действие"):
                     it["use"] = None if kind == "none" else {"kind": kind, "value": amount, "duration": duration}
                     persist_and_rerun()
-        if it.get("desc"): cols[0].caption(it["desc"])
-        if cols[3].button("🗑",key=f"x{i}",help="Удалить предмет"): data["inventory"].pop(i); persist_and_rerun()
     with st.form("ai"):
         st.markdown("**Добавить предмет**")
         nn = st.text_input("Название")
