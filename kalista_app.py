@@ -1115,8 +1115,7 @@ def render_player():
         current=public['turn_order'][public['current_turn']] if public['turn_order'] else None
         st.info(f"Раунд {public['round']} · Ход: {current['name'] if current else 'нет участников'}")
     render_combatant_card(data,'ally','Твой персонаж',active=True)
-    if st.session_state.get('player_section')=='Действия':st.session_state['player_section']='Бой'
-    section=st.selectbox('Раздел персонажа',PLAYER_SECTIONS,key='player_section')
+    section=st.session_state.get('player_section','Обзор')
     if section=='Бой':
         target=default_opponent(data,'ally')
         render_action_panel(data,'ally',target,player_mode=True)
@@ -1133,8 +1132,19 @@ def render_player():
 # ===================== INIT =====================
 role = require_access()
 if role == 'player':
-    if st.button('Выйти', key='player_logout'):
-        st.session_state.clear();st.rerun()
+    st.markdown('''<style>
+    @media(min-width:641px){
+      [data-testid="stSidebar"]{order:2;border-right:0;border-left:1px solid #44364e}
+      [data-testid="stMain"]{order:1}
+    }
+    </style>''',unsafe_allow_html=True)
+    if st.session_state.get('player_section')=='Действия':st.session_state['player_section']='Бой'
+    with st.sidebar:
+        st.markdown("<div class='main-title' style='font-size:1.35rem'>✧ Шеогарат</div>",unsafe_allow_html=True)
+        st.radio('Меню персонажа',PLAYER_SECTIONS,key='player_section',label_visibility='collapsed')
+        st.divider()
+        if st.button('Выйти', key='player_logout'):
+            st.session_state.clear();st.rerun()
     render_player()
     st.stop()
 if st.session_state.get('_sync_notice'):
