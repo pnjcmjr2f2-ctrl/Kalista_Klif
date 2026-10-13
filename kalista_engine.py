@@ -6,6 +6,7 @@ from copy import deepcopy
 from uuid import uuid4
 from datetime import datetime
 from kalista_player_model import ensure_player_sheet
+from kalista_progression import xp_needed,initialize_progress,MAX_LEVEL
 
 ELEMENTS = ["Огонь", "Земля", "Вода", "Воздух", "Тьма", "Свет"]
 
@@ -228,7 +229,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -447,7 +448,9 @@ def migrate(saved):
                 kind='burn' if spell['dot']['name']=='Горение' else 'curse'
                 spell['dot']['damage']=kalista_dot_damage(data,kind)
         spell['desc']=spell.get('desc','').replace('18 урона','6% Интеллекта × (1 + сила заклинаний)').replace('10 урона','4% Интеллекта × (1 + сила заклинаний)')
-    data["schema_version"] = 21
+    initialize_progress(data)
+    if data["ally"].get("sheet_profile"):initialize_progress(data["ally"]["sheet_profile"])
+    data["schema_version"] = 22
     return data
 
 
@@ -1771,4 +1774,4 @@ def resolve_player_request(data,request_id,accept):
     return messages
 
 
-__all__ = ['visible_battle_participants','reach_label','ranged_miss_chance','kalista_dot_damage','distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']
+__all__ = ['xp_needed','MAX_LEVEL','visible_battle_participants','reach_label','ranged_miss_chance','kalista_dot_damage','distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']

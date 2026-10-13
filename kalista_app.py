@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v27 · полный лист игрока
+Калиста Клиф — v28 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -1261,7 +1261,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 21:
+if data.get("schema_version", 5) < 22:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1368,14 +1368,15 @@ if page=="Обзор":
     st.caption("Сопротивления в процентах, максимум 95%. Расовая защита от Тьмы дополнительно снижает оставшийся урон на 10%.")
     st.markdown("<div class='section-h'>Характеристики</div>", unsafe_allow_html=True)
     render_stat_grid([(n,total_stat(data,n)) for n in ["Сила","Выносливость","Ловкость","Мудрость","Интеллект","Харизма","Дух"]])
-    total_xp=data['xp']+data['xp_to_next']
-    st.progress(min(1,max(0,data['xp']/max(1,total_xp))),text=f"Общий опыт: {data['xp']} / {total_xp} XP · до следующего уровня: {data['xp_to_next']}")
+    total_xp=xp_needed(data['level'])
+    data['xp_to_next']=max(0,total_xp-data['xp'])
+    st.progress(1.0 if data['level']==MAX_LEVEL else min(1,max(0,data['xp']/max(1,total_xp))),text=f"Опыт уровня: {data['xp']} / {total_xp} XP · до следующего уровня: {data['xp_to_next']}")
     st.markdown("<div class='section-h'>Опыт</div>", unsafe_allow_html=True)
     x1,x2,x3=st.columns([2,1,1])
     ax=x1.number_input("XP",0,value=100,step=50)
     if x2.button("➕ XP"): data["xp"]+=ax; data["xp_to_next"]=max(0,data["xp_to_next"]-ax); persist_and_rerun()
-    if x3.button("⬆ Ур.+1"):
-        data["level"]+=1; data["free_points"]+=4; data["xp_to_next"]=data["level"]*1000; recalc(data); persist_and_rerun()
+    if x3.button("⬆ Ур.+1",disabled=data["level"]>=MAX_LEVEL):
+        data["xp"]=max(0,data["xp"]-xp_needed(data["level"])); data["level"]+=1; data["free_points"]+=4; data["xp_to_next"]=xp_needed(data["level"]); recalc(data); persist_and_rerun()
 
     with st.expander("Настройки портрета", expanded=False):
         data["portrait_url"] = st.text_input("URL своего портрета (пусто — портрет Калисты)", value=data.get("portrait_url", ""), key="portrait")

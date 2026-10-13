@@ -2,6 +2,7 @@
 from copy import deepcopy
 from uuid import uuid4
 import math
+from kalista_progression import MAX_LEVEL
 from urllib.parse import urlparse
 
 STATS=('Сила','Выносливость','Ловкость','Мудрость','Интеллект','Харизма')
@@ -65,6 +66,7 @@ def validate_player_sheet(ally):
         if parsed.scheme not in ('http','https') or not parsed.netloc:raise ValueError('Для портрета нужна ссылка http:// или https://')
     if not isinstance(p['xp_known'],bool): raise ValueError('Неверное состояние опыта')
     number(p['xp'],'Опыт',0)
+    if not 1<=p['level']<=MAX_LEVEL:raise ValueError('Уровень должен быть от 1 до 1650')
     for collection in ('inventory','equipment','quests'):
         if not isinstance(p[collection],list): raise ValueError('Ожидается список: '+collection)
         ids=set()

@@ -60,9 +60,11 @@ def overview(data,root):
         try:st.image(p['portrait_url'],width=180)
         except Exception:st.caption('Портрет не загрузился')
     if a.get('mana_max'):st.progress(a['mana_current']/a['mana_max'],text=f"MP {a['mana_current']}/{a['mana_max']}")
-    xp_goal=p.get('xp_goal')
-    if p['xp_known'] and xp_goal and xp_goal>0:
-        st.progress(min(1,p['xp']/xp_goal),text=f"Общий опыт: {p['xp']} / {xp_goal} XP · до следующего уровня: {max(0,xp_goal-p['xp'])}")
+    xp_goal=e.xp_needed(p['level'])
+    if p['level']==e.MAX_LEVEL:
+        st.progress(1.0,text='Уровень 1650 · достигнут потолок развития')
+    elif p['xp_known'] and xp_goal and xp_goal>0:
+        st.progress(min(1,p['xp']/xp_goal),text=f"Опыт уровня: {p['xp']} / {xp_goal} XP · до следующего уровня: {max(0,xp_goal-p['xp'])}")
     else:
         st.progress(0,text=f"Опыт: {p['xp']} XP · порог не задан" if p['xp_known'] else 'Опыт не заполнен · порог не задан')
     tiles([('Уровень',p['level']),('Атака',p['attack']),('Броня',a['armor']),('Уклонение',f"{e.evasion_chance(a)*100:.1f}%"),('Шанс крита',f"{p['critical_chance']:.2f}%"),('Критический урон',p['critical_damage']),('Свободные очки',p['free_points'])])
@@ -84,8 +86,8 @@ def overview(data,root):
             xp=st.number_input('Опыт',min_value=0,value=p['xp'],key='ps_xp')
             if st.form_submit_button('Сохранить опыт'):
                 values=deepcopy(expected);values.update(xp=xp,xp_known=True);commit(root,'attributes',values,expected)
-        if st.button('Повысить уровень · +4 свободных очка',key='ps_level_up'):
-            values=deepcopy(expected);values['level']+=1;values['free_points']+=4;commit(root,'attributes',values,expected)
+        if st.button('Повысить уровень · +4 свободных очка',key='ps_level_up',disabled=p['level']>=e.MAX_LEVEL):
+            values=deepcopy(expected);values['xp']=max(0,values['xp']-e.xp_needed(values['level']));values['level']+=1;values['free_points']+=4;commit(root,'attributes',values,expected)
     with st.expander('Отдых'):
         expected=baseline(data,'rest')
         st.caption('Восстановит твои HP и ману, снимет эффекты и обычные перезарядки. Заряды и способности с ручной перезарядкой восстанавливаются отдельно.')
@@ -214,7 +216,7 @@ def attributes(data,root):
     with st.expander('Ручная правка характеристик'):
         with st.form('ps_attributes'):
             base={key:st.number_input('Базовая: '+key,min_value=0,value=p['base_stats'][key],key='ps_base_'+key) for key in STATS}
-            level=st.number_input('Уровень',min_value=1,value=p['level'],key='ps_level');points=st.number_input('Свободные очки',min_value=0,value=p['free_points'],key='ps_points')
+            level=st.number_input('Уровень',min_value=1,max_value=e.MAX_LEVEL,value=p['level'],key='ps_level');points=st.number_input('Свободные очки',min_value=0,value=p['free_points'],key='ps_points')
             adjust={key:st.number_input('Ручная поправка: '+label,value=float(p['formula_adjustments'][key]),key='ps_adjust_'+key) for key,label in (('hp','максимум HP'),('armor','броня'),('attack','атака'),('critical_damage','критический урон'),('critical_chance','шанс крита'))}
             resist={key:st.number_input('Базовое сопротивление: '+key,value=int(p['resist_adjustments'][key]),key='ps_resist_'+key) for key in a['resists']}
             if st.form_submit_button('Сохранить характеристики'):
