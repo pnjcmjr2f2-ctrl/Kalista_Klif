@@ -419,5 +419,18 @@
     "license_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/",
     "changes": "Пропорциональное уменьшение, WebP. Игровой масштаб не назначен.",
     "file": "fm_inn2.webp"
+  },
+  {
+    "id": "2mt_grassy_path",
+    "name": "Травяная тропа",
+    "file": "2mt_grassy_path.webp",
+    "width": 1500,
+    "height": 665,
+    "category": "Боевая",
+    "author": "Ross McConnell / 2-Minute Tabletop",
+    "source_url": "https://2minutetabletop.com/product/grassy-path/",
+    "license": "CC BY-NC 4.0",
+    "license_url": "https://creativecommons.org/licenses/by-nc/4.0/",
+    "changes": "Преобразовано в WebP без изменения пропорций. Игровой масштаб не назначен."
   }
 ]
