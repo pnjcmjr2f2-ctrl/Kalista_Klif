@@ -52,6 +52,29 @@ def show_gear(item,root=False):
         html=''.join(f'<div class="stat-tile"><span>{escape(label)}</span><strong>{escape(value)}</strong></div>' for label,value in values)
         st.markdown('<div class="stat-grid">'+html+'</div>',unsafe_allow_html=True)
     else:st.caption('Без числовых бонусов')
+    if item.get('growth'):
+        with st.expander('Рост легендарного предмета · исходные → текущие'):
+            baseline=dict(bonus_values({k:v for k,v in item.items() if k!='growth'},root))
+            current=dict(values)
+            for label,base in baseline.items():st.caption(label+': '+base+' → '+current.get(label,base))
+
+
+def show_comparison(data,item,owner,loot=False):
+    from kalista_compare import preview_equipment
+    try:preview=preview_equipment(data,item,owner,loot)
+    except ValueError as exc:st.caption(str(exc));return
+    st.caption('При надевании · '+preview['slot'].replace(' (посох)','')+' · вместо: '+(', '.join(preview['replaces']) or 'свободной ячейки'))
+    st.caption('Итоговые показатели персонажа: сейчас → после надевания. Текущие HP и мана не восстанавливаются.')
+    if not preview['rows']:st.caption('Числовые показатели не изменятся');return
+    rows=[]
+    for label,before,after in preview['rows']:
+        percent=label in PERCENT_BONUSES or label=='Уклонение'
+        unit='%' if percent else ''
+        delta=after-before
+        delta_text=f"{delta:+.2f}".rstrip('0').rstrip('.').replace('.',',')+(' п.п.' if percent else '')
+        text=lambda value:f"{value:.2f}".rstrip('0').rstrip('.').replace('.',',')+unit
+        rows.append(f'<div class="gear-change"><span>{escape(label)}</span><strong>{text(before)} → {text(after)}</strong><span>{delta_text}</span></div>')
+    st.markdown('<div class="gear-comparison">'+''.join(rows)+'</div>',unsafe_allow_html=True)
 
 
 def show_text_value(value):
@@ -90,6 +113,7 @@ def player_view(section,data,root,commit):
                 if not x['equipped'] and (selected=='Все' or x.get('rarity','Обычный')==selected):
                     st.write(x['name']+' · '+rarity_label(x))
                     show_gear(x)
+                    show_comparison(data,x,'ally')
                     if x['slot'] in EQUIPMENT_SLOTS and st.button('Надеть',key='ps_reserve_equip_'+x['id']):
                         expected=sheet_snapshot(data,'equipment');values=deepcopy(expected)
                         for old in values:
@@ -137,6 +161,7 @@ def gm_view(page,data,apply_item,apply_special=None,apply_equip=None):
             for x in data.get('equipment_reserve',[]):
                 if selected!='Все' and x.get('rarity','Обычный')!=selected:continue
                 st.write(x['name']);show_gear(x,root=True)
+                show_comparison(data,x,'player')
                 if apply_equip and st.button('Надеть',key='root_reserve_equip_'+x['id']):apply_equip(x['id'])
     elif page=='Инвентарь':
         st.caption(f"Золото {data['gold']} · Серебро {data['silver']} · Медь {data['copper']}")

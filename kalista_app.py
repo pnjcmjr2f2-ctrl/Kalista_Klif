@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v35 · полный лист игрока
+Калиста Клиф — v36 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -721,13 +721,6 @@ def render_movement(data,source_token,target_token,player_mode=False):
 
 def render_battle(data):
     render_loot(data)
-    if not data['combat_active'] and data.get('last_battle_reward'):
-        reward=data['last_battle_reward']
-        with st.expander('Награда за последний бой',expanded=True):
-            for hero in reward['heroes']:
-                st.write(f"**{hero['name']}** · +{hero['xp']} XP · уровень {hero['level_after']}")
-                if hero['free_points']:st.caption(f"Свободные очки: +{hero['free_points']}")
-                for item in hero['details']:st.caption(f"{item['name']}: {item['xp']} XP · {item['reason']}")
     render_battle_header(data)
     render_turn_context(data)
     section = st.session_state["battle_section"]
@@ -1221,36 +1214,73 @@ def render_live_battle():
 def render_loot(data):
     batches=data.get('loot_batches',[])
     pending=[r for b in batches for r in b['items'] if not r['recipient'] and not r['discarded']]
-    if not pending:
-        if batches:st.caption('Нераспределённой добычи нет')
-        return
-    with st.expander(f'Добыча после боя · предметов: {len(pending)}',expanded=True):
-        st.caption('Предметы сгенерированы по шаблонам. Проверь свойства перед выдачей; снаряжение попадёт в резерв, а не сразу на персонажа.')
-        for record in pending:
+    reward=data.get('last_battle_reward') if not data['combat_active'] else None
+    if not pending and not reward:return
+    title='Итоги последнего боя' if reward else f'Добыча · ожидает выдачи: {len(pending)}'
+    with st.expander(title,expanded=True):
+        if reward:
+            st.markdown('**Опыт уже начислен**')
+            for hero in reward['heroes']:
+                st.write(f"**{hero['name']}** · +{hero['xp']} XP · уровень {hero['level_after']}")
+                if hero['free_points']:st.caption(f"Новый уровень · свободные очки: +{hero['free_points']}")
+            with st.expander('Расчёт опыта по врагам'):
+                for hero in reward['heroes']:
+                    st.markdown('**'+escape(hero['name'])+'**')
+                    for detail in hero['details']:st.caption(f"{detail['name']}: {detail['xp']} XP · {detail['reason']}")
+            last=next((b for b in batches if b['battle_id']==reward['battle_id']),None)
+            if last:
+                total=len(last['items']);waiting=sum(not r['recipient'] and not r['discarded'] for r in last['items'])
+                st.caption(f'Добыча этого боя: {total} · ожидает выдачи: {waiting}')
+                if not total:st.caption('В этом бою предметы не выпали')
+        if pending:
+            st.markdown(f'**Ожидают выдачи: {len(pending)}**')
+            st.caption('Снаряжение попадёт в резерв. Сравнение показывает результат его надевания, а не самой выдачи.')
+        for index,record in enumerate(pending):
             original=record['item'];prefix='loot_'+record['id']
-            st.markdown('**'+escape(original['name'])+'** · '+rarity_label(original))
-            st.caption('Источник: '+record['enemy']);st.write(original['desc'])
-            with st.form(prefix):
+            with st.expander(rarity_label(original)+' · '+original['name']+f" ×{original['qty']}",expanded=index==0):
+                st.caption('Источник: '+record['enemy'])
                 item=deepcopy(original)
+                recipients=['player']+(['ally'] if data['ally'].get('sheet_profile') else [])
+                recipient=st.selectbox('Получатель',recipients,format_func=lambda t:data['name'] if t=='player' else data['ally']['name'],key=prefix+'_recipient')
                 if editing():
-                    item['name']=st.text_input('Название предмета',item['name'])
-                    item['rarity']=st.selectbox('Редкость',RARITIES,index=RARITIES.index(item['rarity']))
-                    item['qty']=st.number_input('Количество',min_value=1,max_value=100,value=item['qty'])
-                    item['desc']=st.text_area('Свойства и описание',item['desc'])
-                    if item.get('gear'):
-                        root_keys={'Броня':'armor','Атака':'attack','Интеллект':'int','Сила заклинаний':'spell_power'}
-                        for key,value in list(item['gear']['ally_bonuses'].items()):
-                            new=st.number_input('Бонус: '+key,min_value=0,value=value)
-                            item['gear']['ally_bonuses'][key]=new
-                            item['gear']['root_bonuses'][root_keys[key]]=new
-                    elif item.get('use'):item['use']['value']=st.number_input('Сила расходника',min_value=1,value=item['use']['value'])
-                recipient=st.selectbox('Получатель',['player','ally'],format_func=lambda t:data['name'] if t=='player' else data['ally']['name'])
-                if st.form_submit_button('Выдать предмет'):
+                    with st.expander('Изменить свойства перед выдачей'):
+                        item['name']=st.text_input('Название предмета',item['name'],key=prefix+'_name')
+                        item['rarity']=st.selectbox('Редкость',RARITIES,index=RARITIES.index(item['rarity']),key=prefix+'_rarity')
+                        item['qty']=st.number_input('Количество',min_value=1,max_value=100,value=item['qty'],key=prefix+'_qty')
+                        item['desc']=st.text_area('Свойства и описание',item['desc'],key=prefix+'_desc')
+                        if item.get('gear'):
+                            root_keys={'Броня':'armor','Атака':'attack','Интеллект':'int','Сила заклинаний':'spell_power'}
+                            for key,value in list(item['gear']['ally_bonuses'].items()):
+                                new=st.number_input('Бонус: '+key,min_value=0,value=value,key=prefix+'_bonus_'+key)
+                                item['gear']['ally_bonuses'][key]=new;item['gear']['root_bonuses'][root_keys[key]]=new
+                        elif item.get('use'):item['use']['value']=st.number_input('Сила расходника',min_value=1,value=item['use']['value'],key=prefix+'_use')
+                st.write(item['desc'])
+                if item.get('gear'):
+                    from kalista_view import show_gear,show_comparison
+                    displayed=dict(name=item['name'],rarity=item['rarity'],description='',bonuses=item['gear']['ally_bonuses'])
+                    show_gear(displayed)
+                    if item['rarity']=='Легендарный':
+                        level=data['level'] if recipient=='player' else data['ally']['sheet_profile']['level']
+                        st.caption(f'При выдаче привяжется к выбранному владельцу на уровне {level}; рост +2% исходных бонусов за уровень.')
+                    show_comparison(data,item,recipient,loot=True)
+                elif item.get('use'):
+                    st.caption({'heal':'Лечение','mana':'Восстановление маны','shield':'Щит'}[item['use']['kind']]+f" · {item['use']['value']}")
+                cols=st.columns(2)
+                if cols[0].button('Выдать предмет',key=prefix+'_assign',type='primary'):
                     try:
                         assign_loot(data,record['id'],recipient,item);log('Выдана добыча: '+item['name']);persist_and_rerun('Выдача добычи')
                     except (ValueError,OSError) as exc:st.error(str(exc))
-            if st.button('Не выдавать',key=prefix+'_discard'):
-                assign_loot(data,record['id'],'discard');persist_and_rerun('Добыча отклонена')
+                if cols[1].button('Не выдавать',key=prefix+'_discard'):
+                    try:assign_loot(data,record['id'],'discard');persist_and_rerun('Добыча отклонена')
+                    except (ValueError,OSError) as exc:st.error(str(exc))
+        completed=[r for b in batches for r in b['items'] if r['recipient'] or r['discarded']]
+        if completed:
+            with st.expander('История выдачи добычи'):
+                for record in reversed(completed):
+                    name=data['name'] if record['recipient']=='player' else data['ally']['name']
+                    status='Не выдано' if record['discarded'] else 'Выдано: '+name
+                    st.write(record['item']['name']+' · '+status)
+        if not pending:st.caption('Вся добыча распределена')
 
 
 def render_loot_settings(data):
@@ -1502,6 +1532,8 @@ elif page=="Экипировка":
         for item in data.get("equipment_reserve",[]):
             st.write(item["name"]+" · "+rarity_label(item))
             st.caption(item.get("description",""))
+            from kalista_view import show_comparison
+            show_comparison(data,item,"player")
             if st.button("Надеть",key="edit_root_equip_"+item["id"]):apply_view_equip(item["id"])
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Экипировка</div>", unsafe_allow_html=True)
     for slot,it in data["equipment"].items():

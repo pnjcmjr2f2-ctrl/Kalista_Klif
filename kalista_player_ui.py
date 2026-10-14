@@ -4,7 +4,7 @@ from copy import deepcopy
 from uuid import uuid4
 from html import escape
 import streamlit as st
-from kalista_view import editing,player_view
+from kalista_view import editing,player_view,show_comparison,show_gear
 import kalista_engine as e
 from kalista_text import readable_rules
 from kalista_storage import read_state,write_state,StaleState
@@ -148,7 +148,9 @@ def equipment(data,root):
     reserve=[x for x in p['equipment'] if not x['equipped'] or x['slot'] not in EQUIPMENT_SLOTS]
     if reserve:st.markdown('**Резерв и другие ячейки**')
     for item in reserve:
-        with st.expander(('🔹 ' if item['equipped'] else '▫️ ')+item['name']):gear_form(root,item,expected)
+        with st.expander(('🔹 ' if item['equipped'] else '▫️ ')+item['name']):
+            if not item['equipped']:show_comparison(data,item,'ally')
+            gear_form(root,item,expected)
     with st.expander('Добавить снаряжение в резерв'):gear_form(root,None,expected,'Резерв')
 
 
