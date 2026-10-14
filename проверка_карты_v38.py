@@ -82,7 +82,7 @@ with TemporaryDirectory() as directory:
    if role=='gm':
     app.selectbox(key='battle_spell').set_value(s['id']).run();assert not app.exception
     assert any('Заденет героев' in x.value for x in app.warning)
-    assert app.number_input(key='spell_area_'+str(s['id'])+'_x').value==40
+    assert app.session_state['spell_area_'+str(s['id'])+'_x']==40
    assert json.loads(save.read_text())==d,'Viewing metric map changed save'
    if role=='gm' and not editing:
     app.button(key='cast_area_'+str(s['id'])).click().run();assert not app.exception

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v38 · полный лист игрока
+Калиста Клиф — v39 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -739,13 +739,10 @@ def render_area_selection(data,source,ability,target,prefix):
     if st.session_state.get(prefix+'_anchor')!=target:
         st.session_state[prefix+'_x'],st.session_state[prefix+'_y']=data['positions'][target]
         st.session_state[prefix+'_anchor']=target
-    columns=st.columns(2)
-    center=[columns[0].number_input('Центр X (м)',min_value=-1000000.,max_value=1000000.,step=1.,key=prefix+'_x'),columns[1].number_input('Центр Y (м)',min_value=-1000000.,max_value=1000000.,step=1.,key=prefix+'_y')]
+    from kalista_interactive_map import tactical_map
+    center=tactical_map(data,source,prefix+'_canvas',center=[st.session_state[prefix+'_x'],st.session_state[prefix+'_y']],radius=ability['area_radius_m'],mode='area')
     tokens=area_targets(data,center,ability['area_radius_m'])
-    with st.expander('Область на карте',expanded=True):
-        st.image(map_svg(data,center,ability['area_radius_m']),width=600)
-        st.caption(map_legend(data))
-        st.caption('Зелёные — герои и союзники, красные — враги. Оранжевый круг — область попадания. Координаты в метрах.')
+    st.caption('Коснись центра взрыва или потяни его по полю. Оранжевая обводка отмечает попавших в область.')
     problem=''
     try:check_point_range(data,source,ability,center)
     except ValueError as exc:problem=str(exc);st.warning(problem)
@@ -781,30 +778,28 @@ def render_area_spell(data,spell,target):
 def render_tactical_map(data,source,target,player_mode=False):
     from kalista_map import map_svg,point,map_legend
     if data.get('distance_mode')!='meters':return
-    with st.expander('Карта и перемещение по координатам'):
-        st.image(map_svg(data),width=600);st.caption(map_legend(data));st.caption('Координаты в метрах. Дистанция по прямой; препятствия пока не учитываются. Ближняя атака: до 5 м. Перемещение: до 30 м за ход.')
+    from kalista_interactive_map import tactical_map
+    with st.expander('Карта боя · фигурки',expanded=True):
         a=participant(data,source);action=next(x for x in a['actions'] if x.get('rule')=='move_point')
-        x,y=data['positions'][source]
-        with st.form('map_move_'+source):
-            columns=st.columns(2);destination=[columns[0].number_input('Куда X (м)',min_value=-1000000.,max_value=1000000.,value=float(x),step=1.),columns[1].number_input('Куда Y (м)',min_value=-1000000.,max_value=1000000.,value=float(y),step=1.)]
-            disabled=(data['combat_active'] and a.get('movement_used')) or a[hp_fields(a)[0]]<=0 or any(e['kind']=='fear' for e in a['effects'])
-            if st.form_submit_button('Предложить перемещение' if player_mode else 'Переместиться',disabled=disabled):
-                try:
-                    if player_mode:submit_player_action(data,action['id'],[source],False,destination=destination);st.success('Перемещение предложено ведущему')
-                    else:
-                        for message in perform_action(data,source,action['id'],[source],destination=destination):log(message)
-                        persist_and_rerun('Перемещение на карте')
-                except ValueError as exc:st.error(str(exc))
-        if editing() and not player_mode:
-            with st.expander('Расстановка участников · ведущий'):
-                selected=st.selectbox('Кого поставить',[t for t,_ in participants(data)],format_func=lambda t:participant_label(data,t),key='map_edit_actor')
-                with st.form('map_edit_position_'+selected):
-                    x,y=data['positions'][selected];columns=st.columns(2)
-                    location=[columns[0].number_input('Позиция X (м)',min_value=-1000000.,max_value=1000000.,value=float(x)),columns[1].number_input('Позиция Y (м)',min_value=-1000000.,max_value=1000000.,value=float(y))]
-                    if st.form_submit_button('Сохранить позицию'):
-                        data['positions'][selected]=point(location);data['map_revision']=data.get('map_revision',0)+1
-                        invalidate_player_requests(data,'Расстановка изменилась; предложи действие заново')
-                        persist_and_rerun('Расстановка на карте')
+        setup=editing() and not player_mode and st.toggle('Расстановка ведущего',key='map_setup_'+source)
+        selected=source
+        if setup:
+            selected=st.selectbox('Фигурка для расстановки',[t for t,_ in participants(data)],format_func=lambda t:participant_label(data,t),key='map_edit_actor')
+        destination=tactical_map(data,source,'movement_canvas_'+source,mode='setup' if setup else 'move',selected=selected)
+        st.caption('Потяни фигурку или коснись точки. Зелёный круг — 30 м перемещения; линия показывает расстояние. Для просмотра поля включи «Сдвиг».')
+        disabled=(data['combat_active'] and a.get('movement_used')) or a[hp_fields(a)[0]]<=0 or any(e['kind']=='fear' for e in a['effects'])
+        if st.button('Сохранить расстановку' if setup else ('Предложить перемещение' if player_mode else 'Переместиться'),key='map_apply_'+source,disabled=bool(disabled and not setup),use_container_width=True):
+            try:
+                if setup:
+                    data['positions'][selected]=point(destination);data['map_revision']=data.get('map_revision',0)+1
+                    invalidate_player_requests(data,'Расстановка изменилась; предложи действие заново')
+                    persist_and_rerun('Расстановка на карте')
+                elif player_mode:
+                    submit_player_action(data,action['id'],[source],False,destination=destination);st.success('Перемещение предложено ведущему')
+                else:
+                    for message in perform_action(data,source,action['id'],[source],destination=destination):log(message)
+                    persist_and_rerun('Перемещение на карте')
+            except ValueError as exc:st.error(str(exc))
 
 
 def render_movement(data,source_token,target_token,player_mode=False):
