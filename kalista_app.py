@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v32 · полный лист игрока
+Калиста Клиф — v33 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -973,7 +973,7 @@ def render_turn_context(data):
     entries=data.get('turn_actions', [])
     reactions=sum(not entry.get('counts',True) for entry in entries)
     with st.expander(f'Этот ход · действий: {len(entries)-reactions} · реакций и усилений: {reactions}', expanded=bool(entries)):
-        if not entries: st.caption('Действия ещё не применялись. Лимит по умолчанию не задан; его можно настроить для участника.')
+        if not entries: st.caption('Действия ещё не применялись. Доступны два действия и одно перемещение.')
         for entry in entries[-5:]: st.write(f"**{entry['name']} → {entry['target']}** · {entry['result']}")
     st.caption('Два действия и одно перемещение за ход.')
 
@@ -1450,7 +1450,7 @@ if page=="Обзор":
                     st.caption("Не удалось загрузить выбранный портрет")
                     if PORTRAIT_FILE.is_file(): st.image(str(PORTRAIT_FILE), width=220)
             else:
-                st.caption("Портрет хранится в assets/kalista-portrait.png рядом с приложением.")
+                st.caption("Портрет пока не добавлен.")
         with info_column:
             with st.container(key='overview_health'):
                 st.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0),text=f"HP {data['hp_current']}/{data['hp_max']}")

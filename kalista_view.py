@@ -2,6 +2,7 @@
 import streamlit as st
 import kalista_engine as e
 from kalista_rarity import rarity_label,rarity_badge
+from html import escape
 
 def editing():return bool(st.session_state.get('_edit_mode',False))
 
@@ -19,6 +20,47 @@ def show_book(actions,spells=False):
             if a.get('kind','damage')=='damage':st.caption('Попаданий: '+str(a.get('hits',1)))
     st.caption('Применение — на странице «Бой». Настройка — в режиме редактирования.')
 
+ROOT_BONUS_LABELS={'armor':'Броня','attack':'Атака','int':'Интеллект','wis':'Мудрость','spi':'Дух','fire':'Огонь','dark':'Тьма','earth':'Земля','water':'Вода','air':'Воздух','light':'Свет'}
+PERCENT_BONUSES={'Огонь','Тьма','Земля','Вода','Воздух','Свет','Шанс крита'}
+
+def bonus_values(item,root=False):
+    source=item if root else item.get('bonuses',{})
+    result=[]
+    for key,value in source.items():
+        if root and key not in ROOT_BONUS_LABELS:continue
+        if not isinstance(value,(int,float)) or isinstance(value,bool) or value==0:continue
+        label=ROOT_BONUS_LABELS[key] if root else key
+        value_text=f"{value:+g}".replace('.',',')+('%' if label in PERCENT_BONUSES else '')
+        result.append((label,value_text))
+    return result
+
+
+def show_gear(item,root=False):
+    if not item.get('name'):
+        st.caption('Ячейка свободна')
+        return
+    st.markdown(rarity_badge(item),unsafe_allow_html=True)
+    description=item.get('description',item.get('desc',''))
+    if description:st.write(description)
+    values=bonus_values(item,root)
+    if values:
+        html=''.join(f'<div class="stat-tile"><span>{escape(label)}</span><strong>{escape(value)}</strong></div>' for label,value in values)
+        st.markdown('<div class="stat-grid">'+html+'</div>',unsafe_allow_html=True)
+    else:st.caption('Без числовых бонусов')
+
+
+def show_text_value(value):
+    if isinstance(value,dict):
+        labels={'xp':'Опыт','gold':'Золото','silver':'Серебро','copper':'Медь','name':'Название','description':'Описание','desc':'Описание','items':'Предметы','qty':'Количество'}
+        for key,entry in value.items():
+            if key in ('id','source','source_id'):continue
+            if key in labels:st.caption(labels[key])
+            show_text_value(entry)
+    elif isinstance(value,(list,tuple)):
+        for entry in value:show_text_value(entry)
+    elif value is not None:st.write(str(value))
+
+
 def player_view(section,data,root,commit):
     if editing() or section in ('Обзор','Бой','Кубики','Сцена'):return False
     a=data['ally'];p=a['sheet_profile'];st.subheader(section)
@@ -35,14 +77,14 @@ def player_view(section,data,root,commit):
             items=[x for x in p['equipment'] if x['equipped'] and x['slot']==slot and (selected=='Все' or x.get('rarity','Обычный')==selected)]
             if selected!='Все' and not items:continue
             with st.expander(slot+': '+(', '.join(x['name'] for x in items) or '—')):
-                for x in items:st.markdown(rarity_badge(x),unsafe_allow_html=True);st.write(x['description']);st.write({k:v for k,v in x['bonuses'].items() if v})
+                for x in items:show_gear(x)
         with st.expander('Резерв'):
             from copy import deepcopy
             from kalista_player_model import sheet_snapshot
             for x in p['equipment']:
                 if not x['equipped'] and (selected=='Все' or x.get('rarity','Обычный')==selected):
                     st.write(x['name']+' · '+rarity_label(x))
-                    st.caption(x['description'])
+                    show_gear(x)
                     if x['slot'] in EQUIPMENT_SLOTS and st.button('Надеть',key='ps_reserve_equip_'+x['id']):
                         expected=sheet_snapshot(data,'equipment');values=deepcopy(expected)
                         for old in values:
@@ -85,11 +127,11 @@ def gm_view(page,data,apply_item,apply_special=None,apply_equip=None):
     elif page=='Экипировка':
         for slot,x in data['equipment'].items():
             if selected!='Все' and x.get('rarity','Обычный')!=selected:continue
-            with st.expander(slot+': '+(x['name'] or '—')):st.markdown(rarity_badge(x),unsafe_allow_html=True);st.write({k:v for k,v in x.items() if k!='name' and v})
+            with st.expander(slot.replace(' (посох)','')+': '+(x['name'] or '—')):show_gear(x,root=True)
         with st.expander('Резерв'):
             for x in data.get('equipment_reserve',[]):
                 if selected!='Все' and x.get('rarity','Обычный')!=selected:continue
-                st.write(x['name']+' · '+rarity_label(x));st.caption(x.get('description',''))
+                st.write(x['name']);show_gear(x,root=True)
                 if apply_equip and st.button('Надеть',key='root_reserve_equip_'+x['id']):apply_equip(x['id'])
     elif page=='Инвентарь':
         st.caption(f"Золото {data['gold']} · Серебро {data['silver']} · Медь {data['copper']}")
@@ -102,7 +144,10 @@ def gm_view(page,data,apply_item,apply_special=None,apply_equip=None):
     elif page=='Квесты':
         for x in data.get('quests',[]):
             if isinstance(x,dict):
-                with st.expander(x.get('name','Квест')):st.write(x)
+                with st.expander(x.get('name','Квест')):
+                    if x.get('status'):st.caption(x['status'])
+                    for key in ('desc','tasks','notes','reward','rewards','description'):
+                        if x.get(key):show_text_value(x[key])
     elif page=='Ведущий':
         for x in data.get('scenes',[]):
             with st.expander(x['name']+' · '+x['status']):st.write(x.get('summary',''));st.write(x.get('gm_notes',''))
