@@ -61,6 +61,24 @@ def show_gear(item,root=False):
             for label,base in baseline.items():st.caption(label+': '+base+' → '+current.get(label,base))
 
 
+def gear_summary(item,root=False):
+    if not item.get('name'):
+        st.caption('Свободная ячейка');return
+    priority=['Сила заклинаний','Атака','Броня','Интеллект','Сила','Выносливость']
+    values=sorted(bonus_values(item,root),key=lambda pair:priority.index(pair[0]) if pair[0] in priority else len(priority))
+    brief=' · '.join(label+' '+value for label,value in values[:4]) or 'Без числовых бонусов'
+    extra=f'<small>Ещё свойств: {len(values)-4}</small>' if len(values)>4 else ''
+    st.markdown('<div class="gear-summary"><strong>'+escape(item['name'])+'</strong>'+rarity_badge(item)+'<small>'+escape(brief)+'</small>'+extra+'</div>',unsafe_allow_html=True)
+
+
+def inventory_details(item):
+    use=item.get('use')
+    if use:st.caption({'heal':'Лечение','mana':'Восстановление маны','shield':'Щит'}.get(use['kind'],'Эффект')+': +'+str(use['value']))
+    if item.get('desc'):
+        with st.expander('Описание предмета'):
+            st.write(item['desc'])
+
+
 def show_comparison(data,item,owner,loot=False):
     from kalista_compare import preview_equipment
     try:preview=preview_equipment(data,item,owner,loot)
@@ -103,19 +121,26 @@ def player_view(section,data,root,commit):
     elif section=='Заклинания и способности':show_book(a['actions'])
     elif section=='Снаряжение':
         from kalista_player_model import EQUIPMENT_SLOTS
-        for slot in EQUIPMENT_SLOTS:
+        with st.container(key='equipment_cards_ally'):
+            columns=st.columns(2)
+        for slot_index,slot in enumerate(EQUIPMENT_SLOTS):
             items=[x for x in p['equipment'] if x['equipped'] and x['slot']==slot and (selected=='Все' or x.get('rarity','Обычный')==selected)]
             if selected!='Все' and not items:continue
-            with st.expander(slot+': '+(', '.join(x['name'] for x in items) or '—')):
-                for x in items:show_gear(x)
+            with columns[slot_index%2]:
+                with st.container(border=True):
+                    st.caption(slot)
+                    if not items:st.caption('Свободная ячейка')
+                    for x in items:
+                        gear_summary(x)
+                        with st.expander('Все свойства · '+x['name']):show_gear(x)
         with st.expander('Резерв'):
             from copy import deepcopy
             from kalista_player_model import sheet_snapshot
             for x in p['equipment']:
                 if not x['equipped'] and (selected=='Все' or x.get('rarity','Обычный')==selected):
-                    st.write(x['name']+' · '+rarity_label(x))
-                    show_gear(x)
-                    show_comparison(data,x,'ally')
+                    gear_summary(x)
+                    with st.expander('Свойства и сравнение · '+x['name']):
+                        show_gear(x);show_comparison(data,x,'ally')
                     if x['slot'] in EQUIPMENT_SLOTS and st.button('Надеть',key='ps_reserve_equip_'+x['id']):
                         expected=sheet_snapshot(data,'equipment');values=deepcopy(expected)
                         for old in values:
@@ -127,10 +152,11 @@ def player_view(section,data,root,commit):
         expected=sheet_snapshot(data,'inventory')
         for x in p['inventory']:
             if selected!='Все' and x.get('rarity','Обычный')!=selected:continue
-            cols=st.columns([4,1]);cols[0].write(f"**{x['name']}** × {x['qty']}")
-            cols[0].markdown(rarity_badge(x),unsafe_allow_html=True)
-            if x['desc']:cols[0].caption(x['desc'])
-            if x.get('use') and cols[1].button('Применить',key='ps_view_use_'+x['id'],disabled=x['qty']<=0 or x['use']['value']<=0):commit(root,'inventory',None,expected,x['id'])
+            with st.container(border=True):
+                cols=st.columns([4,1]);cols[0].write(f"**{x['name']}** × {x['qty']}")
+                cols[0].markdown(rarity_badge(x),unsafe_allow_html=True)
+                inventory_details(x)
+                if x.get('use') and cols[1].button('Применить',key='ps_view_use_'+x['id'],disabled=x['qty']<=0 or x['use']['value']<=0):commit(root,'inventory',None,expected,x['id'])
     elif section=='Квесты':
         for x in p['quests']:
             with st.expander(x['name']+' · '+x['status']):st.write(x['desc'])
@@ -156,23 +182,32 @@ def gm_view(page,data,apply_item,apply_special=None,apply_equip=None):
                     if st.button('Использовать',key='view_special_'+key,disabled=not allowed):apply_special(key)
                     if not allowed:st.caption(reason)
     elif page=='Экипировка':
-        for slot,x in data['equipment'].items():
+        with st.container(key='equipment_cards_root'):
+            columns=st.columns(2)
+        for slot_index,(slot,x) in enumerate(data['equipment'].items()):
             if selected!='Все' and x.get('rarity','Обычный')!=selected:continue
-            with st.expander(slot.replace(' (посох)','')+': '+(x['name'] or '—')):show_gear(x,root=True)
+            with columns[slot_index%2]:
+                with st.container(border=True):
+                    st.caption(slot.replace(' (посох)',''))
+                    gear_summary(x,root=True)
+                    if x['name']:
+                        with st.expander('Все свойства · '+x['name']):show_gear(x,root=True)
         with st.expander('Резерв'):
             for x in data.get('equipment_reserve',[]):
                 if selected!='Все' and x.get('rarity','Обычный')!=selected:continue
-                st.write(x['name']);show_gear(x,root=True)
-                show_comparison(data,x,'player')
+                gear_summary(x,root=True)
+                with st.expander('Свойства и сравнение · '+x['name']):
+                    show_gear(x,root=True);show_comparison(data,x,'player')
                 if apply_equip and st.button('Надеть',key='root_reserve_equip_'+x['id']):apply_equip(x['id'])
     elif page=='Инвентарь':
         st.caption(f"Золото {data['gold']} · Серебро {data['silver']} · Медь {data['copper']}")
         for i,x in enumerate(data['inventory']):
             if selected!='Все' and x.get('rarity','Обычный')!=selected:continue
-            cols=st.columns([4,1]);cols[0].write(f"**{x['name']}** × {x['qty']}")
-            cols[0].markdown(rarity_badge(x),unsafe_allow_html=True)
-            if x.get('desc'):cols[0].caption(x['desc'])
-            if x.get('use') and cols[1].button('Применить',key='view_use_'+str(i),disabled=x['qty']<=0 or x['use']['value']<=0):apply_item(x)
+            with st.container(border=True):
+                cols=st.columns([4,1]);cols[0].write(f"**{x['name']}** × {x['qty']}")
+                cols[0].markdown(rarity_badge(x),unsafe_allow_html=True)
+                inventory_details(x)
+                if x.get('use') and cols[1].button('Применить',key='view_use_'+str(i),disabled=x['qty']<=0 or x['use']['value']<=0):apply_item(x)
     elif page=='Квесты':
         for x in data.get('quests',[]):
             if isinstance(x,dict):

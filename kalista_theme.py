@@ -15,3 +15,31 @@ THEME=THEME.replace("</style>","""
 @media(max-width:640px){.focus-card{padding:.45rem}.focus-card strong{font-size:.85rem}.focus-card span{font-size:.65rem}.st-key-movement_controls button{min-height:44px;width:100%}}
 </style>
 """)
+
+THEME=THEME.replace("</style>","""
+.st-key-battle_workstation [data-testid="stColumn"]{min-width:0}
+.st-key-board_actionpanel{background:#241c2c;border:1px solid var(--line);border-radius:14px;padding:.7rem}
+@media(min-width:900px){.st-key-battle_workstation > div > [data-testid="stHorizontalBlock"]{flex-wrap:nowrap!important}}
+@media(max-width:899px){.st-key-battle_workstation > div > [data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}.st-key-battle_workstation > div > [data-testid="stHorizontalBlock"] > [data-testid="stColumn"]{width:100%!important;flex:1 1 100%!important}}
+.st-key-board_actionpanel [data-testid="stButton"]:has(button[kind="primary"]){position:sticky;bottom:8px;z-index:3}
+</style>
+""")
+
+THEME=THEME.replace("</style>","""
+.focus-card .focus-portrait,.focus-card .focus-initial{float:left;width:36px;height:36px;object-fit:cover;object-position:top;border-radius:50%;margin:.2rem .4rem .2rem 0;background:#634970;text-align:center;line-height:36px;color:#fff}
+[data-testid="stLayoutWrapper"]:has(>.st-key-player_battle_hud){position:sticky;top:3.5rem;z-index:40;background:#241c2c;border-radius:10px;padding:4px 10px}
+.st-key-battle_header .battle-strip span{font-size:.78rem}
+</style>
+""")
+
+THEME=THEME.replace("</style>","""
+.st-key-battle_top [data-testid="stColumn"]:first-child{flex:4 1 0!important}.st-key-battle_top [data-testid="stColumn"]:last-child{flex:1 1 0!important}
+.st-key-board_actionpanel [data-testid="stMarkdown"] p{font-size:.8rem;line-height:1.35}
+</style>
+""")
+
+THEME=THEME.replace("</style>","""
+.gear-summary strong{display:block;font-size:.95rem;margin-bottom:.25rem}.gear-summary small{display:block;color:#c9b7d4;font-size:.75rem;line-height:1.45;margin-top:.3rem}
+@media(max-width:640px){[class*="st-key-equipment_cards_"] [data-testid="stHorizontalBlock"]{flex-wrap:wrap!important}[class*="st-key-equipment_cards_"] [data-testid="stColumn"]{flex:1 1 100%!important;width:100%!important}}
+</style>
+""")

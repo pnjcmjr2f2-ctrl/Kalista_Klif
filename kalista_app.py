@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v40 · полный лист игрока
+Калиста Клиф — v41 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -251,45 +251,47 @@ def reset_participant_widgets():
 
 
 def render_battle_header(data):
-    actor = get_current_actor(data) if data["combat_active"] else None
-    turn = f"Раунд {data['round']} · {actor['name']}" if actor else "Бой не начат" if not data["combat_active"] else "Нет активных участников"
-    shield = sum(effect["value"] for effect in data.get("effects", []) if effect["kind"] == "shield")
-    active_scene = scene_record(data, data['active_scene_id'])
-    if active_scene: turn += ' · ' + active_scene['name']
-    with st.container(key="battle_header"):
-        st.markdown(f"""<div class="battle-strip"><strong>{escape(turn)}</strong>
-        <span>{escape(data['name'])} · HP {data['hp_current']}/{data['hp_max']} · MP {data['mana_current']}/{data['mana_max']} · Щит {shield} · Пепел {data['pepel']}/5 · Тень {data['ten']}/5</span></div>""", unsafe_allow_html=True)
-        b1, b2, b3, b4 = st.columns(4)
-        if b1.button("Начать", disabled=data["combat_active"], key="battle_start", use_container_width=True):
-            create_snapshot(SAVE_FILE,"before-battle")
-            for message in start_combat(data): log(message)
-            persist_and_rerun("Начало боя")
-        if b2.button("Конец хода", disabled=not data["combat_active"] or not data["turn_order"], key="battle_next", use_container_width=True):
-            for message in advance_turn(data): log(message)
-            persist_and_rerun("Следующий ход")
-        history = st.session_state.get("_undo_history", [])
-        hint = f"Отменить: {history[-1]['label']}" if history else "Нет действий для отмены"
-        if b3.button("Отмена", disabled=not history, key="battle_undo", help=hint, use_container_width=True):
-            undo_last_action()
-        if b4.button("Стоп", disabled=not data["combat_active"], key="battle_stop", use_container_width=True):
-            log(end_combat(data))
-            persist_and_rerun("Завершение боя")
-        prefs = st.session_state.setdefault("_battle_preferences", {})
-        if "battle_section" not in st.session_state:
-            st.session_state["battle_section"] = prefs.get("battle_section", "Ход")
-        if st.session_state["battle_section"] == "Калиста":
-            st.session_state["battle_section"] = "Ход"
-        selected = st.radio("Раздел боя", ["Ход", "Участники", "Эффекты", "Очередь", "Журнал"],
-                            key="battle_section", horizontal=True, label_visibility="collapsed")
-        prefs["battle_section"] = selected
+    actor=get_current_actor(data) if data['combat_active'] else None
+    token=actor_token(actor) if actor else 'player'
+    active=participant(data,token);hp,maximum=hp_fields(active)
+    used=sum(x['source']==token and x.get('counts',True) for x in data.get('turn_actions',[]))
+    turn=f"Раунд {data['round']} · {actor['name']}" if actor else 'Бой не начат'
+    resources=f"HP {active[hp]}/{active[maximum]}"+(f" · MP {active['mana_current']}/{active['mana_max']}" if active.get('mana_max') else '')
+    budget=f"Действия {max(0,2-used)}/2 · перемещение "+('использовано' if active.get('movement_used') else 'доступно')
+    def start():
+        create_snapshot(SAVE_FILE,'before-battle')
+        for message in start_combat(data):log(message)
+        persist_and_rerun('Начало боя')
+    with st.container(key='battle_header'):
+        with st.container(key='battle_top'):
+            left,right=st.columns([4,1])
+            left.markdown(f'<div class="battle-strip"><strong>{escape(turn)}</strong><span>{escape(resources)} · {escape(budget)}</span></div>',unsafe_allow_html=True)
+            if data['combat_active']:
+                if right.button('Конец хода',key='battle_next',disabled=not data['turn_order'],type='primary',use_container_width=True):
+                    for message in advance_turn(data):log(message)
+                    persist_and_rerun('Следующий ход')
+            elif right.button('Начать',key='battle_start',type='primary',use_container_width=True):start()
+        prefs=st.session_state.setdefault('_battle_preferences',{})
+        if 'battle_section' not in st.session_state:st.session_state['battle_section']=prefs.get('battle_section','Ход')
+        if st.session_state['battle_section']=='Калиста':st.session_state['battle_section']='Ход'
+        prefs['battle_section']=st.radio('Раздел боя',['Ход','Участники','Эффекты','Очередь','Журнал'],key='battle_section',horizontal=True,label_visibility='collapsed')
+    with st.expander('Управление боем · отмена и завершение'):
+        columns=st.columns(3)
+        if data['combat_active']:
+            columns[0].button('Начать',key='battle_start',disabled=True,use_container_width=True)
+        else:columns[0].button('Конец хода',key='battle_next',disabled=True,use_container_width=True)
+        history=st.session_state.get('_undo_history',[])
+        if columns[1].button('Отмена',key='battle_undo',disabled=not history,help=f"Отменить: {history[-1]['label']}" if history else 'Нет действий для отмены',use_container_width=True):undo_last_action()
+        if columns[2].button('Стоп',key='battle_stop',disabled=not data['combat_active'],use_container_width=True):
+            log(end_combat(data));persist_and_rerun('Завершение боя')
 
 
-def render_selected_spell(data, target):
+def render_selected_spell(data, target, selected_id=None):
     if not data["spells"]:
         st.info("Заклинаний пока нет. Добавь их на странице «Заклинания».")
         return
     spells = {spell["id"]: spell for spell in data["spells"]}
-    sid = remembered_select("Способность", list(spells), "battle_spell", default=data["spells"][0]["id"],
+    sid = selected_id if selected_id is not None else remembered_select("Способность", list(spells), "battle_spell", default=data["spells"][0]["id"],
                             format_func=lambda value: f"{spells[value]['name']} · {reach_label(spells[value])} · {spells[value]['mana']} MP" +
                             (f" · КД {spells[value]['cd_left']}" if spells[value]['cd_left'] else ""))
     spell = spells[sid]
@@ -594,9 +596,9 @@ def render_party(data):
         render_participant_editor(data, 'ally')
 
 
-def render_focus_cards(data,source_token,target_token):
+def render_focus_cards(data,source_token,target_token,player_mode=False):
     cards=[]
-    for token,title in ((source_token,'Действует'),(target_token,'Цель')):
+    for token,title in ((source_token,'Твой персонаж' if player_mode else 'Действует'),(target_token,'Цель')):
         target=participant(data,token);hp,maximum=hp_fields(target)
         shield=sum(x['value'] for x in target.get('effects',[]) if x['kind']=='shield')
         profile=target.get('sheet_profile',{})
@@ -609,7 +611,9 @@ def render_focus_cards(data,source_token,target_token):
         if target.get('eye_damage_boost'):statuses.insert(0,'Десница ×2')
         if target.get('defensive_stance'):statuses.insert(0,'Стойка −30%')
         status=escape(' · '.join(statuses))
-        cards.append(f'<div class="focus-card"><small>{title}</small><strong>{escape(target["name"])}</strong><span>{escape(identity or combat_side(data,token))}</span><b>HP {target[hp]}/{target[maximum]}</b><div class="combat-health"><div style="width:{ratio:g}%"></div></div><span>Щит {shield}{resource} · эффектов {effects}</span><span>{status}</span></div>')
+        portrait='/component/kalista_interactive_map.kalista_tactical_map/kalista.png' if token=='player' else (profile.get('portrait_url') or '/component/kalista_interactive_map.kalista_tactical_map/sheogarat.webp') if token=='ally' else ''
+        avatar=f'<img class="focus-portrait" src="{escape(portrait,quote=True)}" alt=""/>' if portrait else '<span class="focus-initial">'+escape(target['name'][:1])+'</span>'
+        cards.append(f'<div class="focus-card"><small>{title}</small>{avatar}<strong>{escape(target["name"])}</strong><span>{escape(identity or combat_side(data,token))}</span><b>HP {target[hp]}/{target[maximum]}</b><div class="combat-health"><div style="width:{ratio:g}%"></div></div><span>Щит {shield}{resource} · эффектов {effects}</span><span>{status}</span></div>')
     st.markdown('<div class="focus-cards">'+''.join(cards)+'</div>',unsafe_allow_html=True)
 
 
@@ -739,10 +743,14 @@ def render_area_selection(data,source,ability,target,prefix):
     if st.session_state.get(prefix+'_anchor')!=target:
         st.session_state[prefix+'_x'],st.session_state[prefix+'_y']=data['positions'][target]
         st.session_state[prefix+'_anchor']=target
-    from kalista_interactive_map import tactical_map
-    center=tactical_map(data,source,prefix+'_canvas',center=[st.session_state[prefix+'_x'],st.session_state[prefix+'_y']],radius=ability['area_radius_m'],mode='area')
+    context=(source,ability['id'],data.get('map_revision',0),data.get('turn_serial',0))
+    if st.session_state.get('_board_area_context')==context:
+        center=st.session_state['_board_area']
+    else:
+        from kalista_interactive_map import tactical_map
+        center=tactical_map(data,source,prefix+'_canvas',center=[st.session_state[prefix+'_x'],st.session_state[prefix+'_y']],radius=ability['area_radius_m'],mode='area')
     tokens=area_targets(data,center,ability['area_radius_m'])
-    st.caption('Коснись центра взрыва или потяни его по полю. Оранжевая обводка отмечает попавших в область.')
+    if st.session_state.get('_board_area_context')!=context:st.caption('Коснись центра взрыва или потяни его по полю.')
     problem=''
     try:check_point_range(data,source,ability,center)
     except ValueError as exc:problem=str(exc);st.warning(problem)
@@ -816,6 +824,111 @@ def render_movement(data,source_token,target_token,player_mode=False):
     st.caption('Дистанция до цели: '+(f'{separation(data,source_token,target_token):.1f} м · ' if data.get('distance_mode')=='meters' else '')+distance_between(data,source_token,target_token))
 
 
+def render_ability_palette(data,source,player_mode=False):
+    actor=participant(data,source)
+    abilities=data['spells'] if source=='player' else [a for a in actor.get('actions',[]) if a.get('rule') not in ('move_close','move_far','move_point')]
+    if not abilities:return None
+    key='battle_spell' if source=='player' else 'action_choice_'+source
+    available={a['id']:a for a in abilities}
+    current=st.session_state.get(key,abilities[0]['id'])
+    if current not in available:current=abilities[0]['id']
+    used=sum(x['source']==source and x.get('counts',True) for x in data.get('turn_actions',[]))
+    pending=st.session_state.pop('_pending_ability_'+source,None)
+    if pending in available:
+        st.session_state[key]=pending;current=pending
+        st.session_state['board_mode_'+source]='Атака'
+    palette=[]
+    for i,a in enumerate(abilities):
+        mana=a.get('mana',a.get('mana_cost',0));cd=a.get('cd_left',a.get('cooldown_left',0))
+        reasons=[]
+        if actor[hp_fields(actor)[0]]<=0:reasons.append('0 HP')
+        if any(e['kind']=='fear' for e in actor.get('effects',[])):reasons.append('Страх')
+        if mana>actor.get('mana_current',0):reasons.append('Не хватает маны')
+        if cd:reasons.append(f'Перезарядка: {cd}')
+        if data['combat_active'] and used>=2 and not a.get('reaction'):reasons.append('Действия закончились')
+        if a.get('needs_setup'):reasons.append('Нужно настроить правила')
+        if player_mode and data['combat_active'] and (not get_current_actor(data) or actor_token(get_current_actor(data))!=source) and not a.get('reaction'):reasons.append('Сейчас ход другого участника')
+        if a.get('spent'):reasons.append('Нужна перезарядка')
+        if a.get('charges_max') and not a.get('charges_left'):reasons.append('Нет зарядов')
+        if a.get('rule')=='eye' and (not data['combat_active'] or actor.get('eye_used')):reasons.append('Десница недоступна')
+        label=a['name']+f' · {mana} MP'+(f' · КД {cd}' if cd else '')
+        palette.append(dict(id=a['id'],name=a['name'],mana=mana,cd=cd,reason='; '.join(reasons)))
+    st.session_state['_board_palette_'+source]=palette
+    with st.expander('Все способности · просмотр недоступных'):
+        selected=remembered_select('Способность' if source=='player' else 'Действие',list(available),key,default=current,format_func=lambda aid:available[aid]['name']+' · '+reach_label(available[aid]))
+    return available[selected]
+
+
+def render_battle_workstation(data,source,target_key,player_mode=False):
+    from kalista_interactive_map import tactical_map
+    from kalista_map_background import background
+    tokens=[t for t,_ in visible_battle_participants(data)]
+    default=default_opponent(data,source)
+    target=st.session_state.get(target_key,default)
+    if target not in tokens:target=default if default in tokens else tokens[0]
+    ability=render_ability_palette(data,source,player_mode)
+    changed=st.session_state.get('board_ability_'+source)
+    if ability and changed is not None and changed!=ability['id']:st.session_state['board_mode_'+source]='Атака'
+    if ability:st.session_state['board_ability_'+source]=ability['id']
+    mode=st.radio('Режим карты',['Атака','Перемещение'],horizontal=True,key='board_mode_'+source)
+    if editing() and not player_mode:
+        from kalista_map_library_ui import render_library
+        render_library(data,persist_and_rerun)
+    setup=bool(editing() and not player_mode and st.toggle('Расстановка ведущего',key='map_setup_'+source))
+    selected=source
+    if setup:selected=remembered_select('Фигурка для расстановки',tokens,'map_edit_actor',default=source,format_func=lambda t:participant_label(data,t))
+    area=bool(ability and ability.get('area_radius_m',0) and mode=='Атака' and not setup and data.get('distance_mode')=='meters')
+    center=data['positions'][target] if area else None
+    st.session_state.pop('_board_area_context',None)
+    with st.container(key='battle_workstation'):
+        map_column,panel=st.columns([1.65,1],gap='medium')
+        with map_column:
+            backdrop=background(data)
+            if backdrop:st.caption('Локация: '+backdrop['name'])
+            if data.get('distance_mode')=='meters':
+                destination=tactical_map(data,source,'shared_map_'+source,center=center,radius=ability['area_radius_m'] if area else 0,mode='setup' if setup else 'move' if mode=='Перемещение' else 'area' if area else 'target',selected=selected,target=target,target_key=target_key,range_m=ability_range(ability) if ability and mode=='Атака' else None)
+                target=st.session_state.get(target_key,target)
+                if area:
+                    st.session_state['_board_area_context']=(source,ability['id'],data.get('map_revision',0),data.get('turn_serial',0))
+                    st.session_state['_board_area']=destination
+                st.caption('Выбери фигурку цели.' if mode=='Атака' and not area and not setup else 'Коснись центра области — оранжевая обводка показывает цели.' if area else 'Потяни фигурку или коснись точки назначения. Затем подтверди справа или под картой.')
+            else:destination=data['positions'][source];st.info('Для поля в метрах включи актуальную карту.')
+        with panel:
+            with st.expander('Выбрать цель из списка'):
+                target=remembered_select('Цель действия',tokens,target_key,default=target,format_func=lambda t:participant_label(data,t))
+            render_focus_cards(data,source,target,player_mode)
+            render_movement(data,source,target,player_mode)
+            with st.container(key='board_actionpanel'):
+                if setup or mode=='Перемещение':
+                    actor=participant(data,source)
+                    action=next(a for a in actor['actions'] if a.get('rule')=='move_point')
+                    distance=math.dist(data['positions'][source],destination)
+                    if not setup:st.caption(f'Перемещение: {distance:.1f} / 30 м')
+                    reasons=[]
+                    if not setup:
+                        if player_mode and data['combat_active'] and (not get_current_actor(data) or actor_token(get_current_actor(data))!=source):reasons.append('Сейчас ход другого участника')
+                        if distance<=1e-9:reasons.append('Выбери точку назначения')
+                        if distance>30+1e-9:reasons.append('Больше 30 м')
+                        if data['combat_active'] and actor.get('movement_used'):reasons.append('Перемещение использовано')
+                        if actor[hp_fields(actor)[0]]<=0:reasons.append('0 HP')
+                        if any(e['kind']=='fear' for e in actor['effects']):reasons.append('Страх')
+                    if reasons:st.caption('Недоступно: '+'; '.join(reasons))
+                    if st.button('Сохранить расстановку' if setup else 'Предложить перемещение' if player_mode else 'Переместиться',key='map_apply_'+source,type='primary',disabled=bool(reasons),use_container_width=True):
+                        try:
+                            if setup:
+                                data['positions'][selected]=destination;data['map_revision']=data.get('map_revision',0)+1;invalidate_player_requests(data,'Расстановка изменилась; предложи действие заново');persist_and_rerun('Расстановка на карте')
+                            elif player_mode:submit_player_action(data,action['id'],[source],False,destination=destination);st.success('Перемещение предложено ведущему')
+                            else:
+                                for message in perform_action(data,source,action['id'],[source],destination=destination):log(message)
+                                persist_and_rerun('Перемещение на карте')
+                        except (ValueError,OSError) as exc:st.error(str(exc))
+                elif ability:
+                    if source=='player':render_selected_spell(data,participant(data,target),selected_id=ability['id'])
+                    else:render_action_panel(data,source,target,player_mode,selected_id=ability['id'])
+    st.session_state.pop('_board_area_context',None)
+    return target
+
+
 def render_battle(data):
     render_loot(data)
     render_battle_header(data)
@@ -837,16 +950,7 @@ def render_battle(data):
         if not active_token:
             active_token = remembered_select("Кто действует", tokens, "battle_manual_actor", default="player",
                                              format_func=lambda value: participant_label(data, value))
-        default = default_opponent(data, active_token)
-        token = remembered_select("Цель действия", tokens, f"turn_target_{active_token}", default=default,
-                                  format_func=lambda value: participant_label(data, value))
-        render_focus_cards(data,active_token,token)
-        render_movement(data,active_token,token)
-        render_tactical_map(data,active_token,token)
-        if active_token == "player": render_selected_spell(data, participant(data, token))
-        else:
-            with st.container(key="turn_action"):
-                render_combatant_action(data, active_token, token)
+        token=render_battle_workstation(data,active_token,f'turn_target_{active_token}')
         render_turn_context(data)
         with st.expander("Подробнее об участнике и цели"):
             render_combatant_card(data,active_token,"Действует",active=True)
@@ -1067,7 +1171,7 @@ def render_turn_context(data):
     st.caption('Два действия и одно перемещение за ход.')
 
 
-def render_action_panel(data, source_token, victim_token, player_mode=False):
+def render_action_panel(data, source_token, victim_token, player_mode=False, selected_id=None):
     source=participant(data,source_token)
     if not source.get('actions'):
         source['actions']=[action_template('Атака',amount=source.get('attack_damage',0),shared_attack=True,damage_type=source.get('attack_type','Физический')),
@@ -1076,7 +1180,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     if not actions:
         st.caption('Атакующих способностей пока нет. Перемещение доступно в отдельном блоке боя.')
         return
-    aid=remembered_select('Действие', list(actions), f'action_choice_{source_token}', format_func=lambda value: actions[value]['name']+' · '+reach_label(actions[value]))
+    aid=selected_id if selected_id is not None else remembered_select('Действие', list(actions), f'action_choice_{source_token}', format_func=lambda value: actions[value]['name']+' · '+reach_label(actions[value]))
     action=actions[aid]
     if action['needs_setup']: st.warning('Для этого действия ведущему нужно задать боевые числа и подтвердить правила в редакторе действий.')
     critical=False
@@ -1133,6 +1237,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     used=sum(a['source']==source_token and a.get('counts',True) for a in data.get('turn_actions',[]))
     if data['combat_active'] and used>=2 and not reaction and not action.get('rule','').startswith('move_'):unavailable=True
     reasons=[]
+    if player_mode and data['combat_active'] and (not get_current_actor(data) or actor_token(get_current_actor(data))!=source_token) and not reaction:reasons.append('Сейчас ход другого участника');unavailable=True
     if source[hp_fields(source)[0]]<=0:reasons.append('у персонажа 0 HP');unavailable=True
     if any(x['kind']=='fear' for x in source.get('effects',[])):reasons.append('персонаж под страхом');unavailable=True
     if action['charges_max'] and action['charges_left']<=0:reasons.append('заряды закончились')
@@ -1325,7 +1430,7 @@ def render_loot(data):
     reward=data.get('last_battle_reward') if not data['combat_active'] else None
     if not pending and not reward:return
     title='Итоги последнего боя' if reward else f'Добыча · ожидает выдачи: {len(pending)}'
-    with st.expander(title,expanded=not data['combat_active']):
+    with st.expander(title,expanded=False):
         if reward:
             st.markdown('**Опыт уже начислен**')
             for hero in reward['heroes']:
@@ -1438,22 +1543,22 @@ def render_player():
     if st.session_state.get('player_section')!='Бой':
         st.markdown("<div class='main-title'>"+escape(public['ally']['name'])+'</div>',unsafe_allow_html=True)
         st.caption('Игрок · '+(profile['race']+' · '+profile['class'] if profile else 'Союзник'))
-    if public['combat_active']:
+    if public['combat_active'] and st.session_state.get('player_section')!='Бой':
         current=public['turn_order'][public['current_turn']] if public['turn_order'] else None
         st.info(f"Раунд {public['round']} · Ход: {current['name'] if current else 'нет участников'}")
     section=st.session_state.get('player_section','Обзор')
     if section=='Обзор':render_combatant_card(data,'ally','Твой персонаж',active=True)
     elif section!='Бой':st.caption(section+' · HP '+str(public['ally']['hp'])+'/'+str(public['ally']['hp_max']))
     if section=='Бой':
+        actor=get_current_actor(data) if data['combat_active'] else None
+        used=sum(x['source']=='ally' and x.get('counts',True) for x in data.get('turn_actions',[]))
+        with st.container(key='player_battle_hud'):
+            st.caption(('Раунд '+str(data['round'])+' · ход: '+actor['name'] if actor else 'Бой не начат')+f" · Действия {max(0,2-used)}/2 · Перемещение "+('использовано' if data['ally'].get('movement_used') else 'доступно'))
         if not data['combat_active'] and data.get('last_battle_reward'):
             hero=next((x for x in data['last_battle_reward']['heroes'] if x['token']=='ally'),None)
-            if hero:st.success(f"Награда за бой: +{hero['xp']} XP · уровень {hero['level_after']}"+(f" · +{hero['free_points']} свободных очков" if hero['free_points'] else ''))
+            if hero:st.caption(f"Награда за бой: +{hero['xp']} XP · уровень {hero['level_after']}"+(f" · +{hero['free_points']} свободных очков" if hero['free_points'] else ''))
         tokens=[token for token,_ in visible_battle_participants(data)]
-        target=remembered_select('Цель действия',tokens,'player_battle_target',default=default_opponent(data,'ally'),format_func=lambda t:participant_label(data,t))
-        render_focus_cards(data,'ally',target)
-        render_movement(data,'ally',target,player_mode=True)
-        render_tactical_map(data,'ally',target,player_mode=True)
-        render_action_panel(data,'ally',target,player_mode=True)
+        target=render_battle_workstation(data,'ally','player_battle_target',player_mode=True)
         with st.expander('Подробнее об участнике и цели'):
             render_combatant_card(data,'ally','Твой персонаж',active=True)
             render_combatant_card(data,target,'Цель')
@@ -1654,24 +1759,27 @@ elif page=="Экипировка":
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Экипировка</div>", unsafe_allow_html=True)
     for slot,it in data["equipment"].items():
         with st.expander(f"{rarity_label(it).split()[0] if it.get('name') else '▫️'} {slot.replace(' (посох)','')}: {it.get('name') or '—'}"):
-            if it.get("growth"):st.caption(f"Исходные бонусы на уровне {it['growth']['anchor_level']}; текущие значения с ростом — в обычном просмотре.")
-            it["rarity"]=st.selectbox("Редкость",RARITIES,index=RARITIES.index(it.get("rarity","Обычный")),key=f"rarity_{slot}")
-            it["name"]=st.text_input("Название",it.get("name",""),key=f"n{slot}")
-            c=st.columns(4)
-            it["armor"]=c[0].number_input("Броня",0,value=int(it.get("armor",0)),key=f"a{slot}")
-            it["spell_power"]=st.number_input("Сила заклинаний (%)",value=float(it.get("spell_power",0)),key=f"power_{slot}")
-            it["attack"]=c[1].number_input("Атака",0,value=int(it.get("attack",0)),key=f"t{slot}")
-            it["int"]=c[2].number_input("Интеллект",0,value=int(it.get("int",0)),key=f"i{slot}")
-            it["wis"]=c[3].number_input("Мудрость",0,value=int(it.get("wis",0)),key=f"w{slot}")
-            c2=st.columns(4)
-            it["spi"]=c2[0].number_input("Дух",0,value=int(it.get("spi",0)),key=f"s{slot}")
-            it["fire"]=c2[1].number_input("Огонь (%)",0,value=int(it.get("fire",0)),key=f"f{slot}")
-            it["dark"]=c2[2].number_input("Тьма (%)",0,value=int(it.get("dark",0)),key=f"d{slot}")
-            it["earth"]=c2[3].number_input("Земля (%)",0,value=int(it.get("earth",0)),key=f"e{slot}")
-            c3=st.columns(3)
-            it["water"]=c3[0].number_input("Вода (%)",0,value=int(it.get("water",0)),key=f"wa{slot}")
-            it["air"]=c3[1].number_input("Воздух (%)",0,value=int(it.get("air",0)),key=f"ai{slot}")
-            it["light"]=c3[2].number_input("Свет (%)",0,value=int(it.get("light",0)),key=f"l{slot}")
+            from kalista_view import gear_summary
+            gear_summary(it,root=True)
+            with st.expander('Изменить свойства'):
+                if it.get("growth"):st.caption(f"Исходные бонусы на уровне {it['growth']['anchor_level']}; текущие значения с ростом — в обычном просмотре.")
+                it["rarity"]=st.selectbox("Редкость",RARITIES,index=RARITIES.index(it.get("rarity","Обычный")),key=f"rarity_{slot}")
+                it["name"]=st.text_input("Название",it.get("name",""),key=f"n{slot}")
+                c=st.columns(4)
+                it["armor"]=c[0].number_input("Броня",0,value=int(it.get("armor",0)),key=f"a{slot}")
+                it["spell_power"]=st.number_input("Сила заклинаний (%)",value=float(it.get("spell_power",0)),key=f"power_{slot}")
+                it["attack"]=c[1].number_input("Атака",0,value=int(it.get("attack",0)),key=f"t{slot}")
+                it["int"]=c[2].number_input("Интеллект",0,value=int(it.get("int",0)),key=f"i{slot}")
+                it["wis"]=c[3].number_input("Мудрость",0,value=int(it.get("wis",0)),key=f"w{slot}")
+                c2=st.columns(4)
+                it["spi"]=c2[0].number_input("Дух",0,value=int(it.get("spi",0)),key=f"s{slot}")
+                it["fire"]=c2[1].number_input("Огонь (%)",0,value=int(it.get("fire",0)),key=f"f{slot}")
+                it["dark"]=c2[2].number_input("Тьма (%)",0,value=int(it.get("dark",0)),key=f"d{slot}")
+                it["earth"]=c2[3].number_input("Земля (%)",0,value=int(it.get("earth",0)),key=f"e{slot}")
+                c3=st.columns(3)
+                it["water"]=c3[0].number_input("Вода (%)",0,value=int(it.get("water",0)),key=f"wa{slot}")
+                it["air"]=c3[1].number_input("Воздух (%)",0,value=int(it.get("air",0)),key=f"ai{slot}")
+                it["light"]=c3[2].number_input("Свет (%)",0,value=int(it.get("light",0)),key=f"l{slot}")
     if st.button("🔄 Пересчитать",type="primary"):
         recalc_equip(data); recalc(data); st.success(f"Броня {data['armor']}"); persist_and_rerun()
 

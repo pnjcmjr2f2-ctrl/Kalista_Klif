@@ -4,7 +4,7 @@ from copy import deepcopy
 from uuid import uuid4
 from html import escape
 import streamlit as st
-from kalista_view import editing,player_view,show_comparison,show_gear
+from kalista_view import editing,player_view,show_comparison,show_gear,gear_summary
 import kalista_engine as e
 from kalista_text import readable_rules
 from kalista_storage import read_state,write_state,StaleState
@@ -57,8 +57,9 @@ def tiles(values):
 
 def overview(data,root):
     a=data['ally'];p=a['sheet_profile']
-    if p['portrait_url']:
-        try:st.image(p['portrait_url'],width=180)
+    portrait=p['portrait_url'] or (str(Path(root)/'assets'/'sheogarat-portrait.webp') if (Path(root)/'assets'/'sheogarat-portrait.webp').is_file() else '')
+    if portrait:
+        try:st.image(portrait,width=180)
         except Exception:st.caption('Портрет не загрузился')
     if a.get('mana_max'):st.progress(a['mana_current']/a['mana_max'],text=f"MP {a['mana_current']}/{a['mana_max']}")
     xp_goal=e.xp_needed(p['level'])
@@ -115,7 +116,7 @@ def inventory(data,root):
                 if cols[2].button('Применить',key='ps_use_'+item['id'],disabled=item['qty']<1 or item['use']['value']<=0):commit(root,'inventory',None,expected,item['id'])
             if cols[3].button('🗑',key='ps_item_'+item['id']+'_delete',help='Удалить предмет'):
                 commit(root,'inventory',dict(items=[x for x in expected['items'] if x['id']!=item['id']],currency=expected['currency']),expected)
-        with st.expander('Свойства и действие предмета · '+item['name']):item_form(data,root,item,expected)
+        with st.expander('Изменить предмет · '+item['name']):item_form(data,root,item,expected)
     with st.expander('Добавить предмет',expanded=not p['inventory']):item_form(data,root,None,expected)
 
 
@@ -144,7 +145,9 @@ def equipment(data,root):
         if not items:
             with st.expander('▫️ '+slot+': —'):gear_form(root,None,expected,slot)
         for item in items:
-            with st.expander(e.rarity_label(item)+' · '+slot+': '+item['name']):gear_form(root,item,expected)
+            with st.container(border=True):
+                st.caption(slot);gear_summary(item)
+                with st.expander('Изменить · '+item['name']):gear_form(root,item,expected)
     reserve=[x for x in p['equipment'] if not x['equipped'] or x['slot'] not in EQUIPMENT_SLOTS]
     if reserve:st.markdown('**Резерв и другие ячейки**')
     for item in reserve:

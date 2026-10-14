@@ -6,7 +6,7 @@ header{display:flex;gap:6px;align-items:center;padding:8px;flex-wrap:wrap}
 button{background:#44324f;color:#fff;border:1px solid #8c709e;border-radius:8px;padding:8px 12px;cursor:pointer}
 canvas{display:block;width:100%;height:400px;touch-action:none}
 #hint{padding:8px;min-height:36px;color:#d3c0df}
-#legend{padding:0 8px 10px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px}
+#abilities{display:flex;gap:6px;overflow-x:auto;padding:6px 8px;scrollbar-width:thin}#abilities button{flex:0 0 auto;font-size:12px;padding:7px 9px;max-width:200px}#abilities button:disabled{opacity:.45;cursor:default}#abilities button.selected{background:#755386;border-color:#ddc0ee}#legend{padding:0 8px 10px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px}
 button:focus-visible{outline:2px solid orange}
 </style>
 <header>
@@ -17,10 +17,10 @@ button:focus-visible{outline:2px solid orange}
 <button id="pan">✋ Сдвиг поля</button>
 <button id="reset" hidden>Сбросить точки</button>
 </header>
-<canvas aria-label="Свободная карта боя"></canvas><div id="hint"></div><div id="legend"></div>
+<div id="abilities" aria-label="Способности персонажа"></div><canvas aria-label="Свободная карта боя"></canvas><div id="hint"></div><div id="legend"></div>
 <script>
 const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d'),hint=document.querySelector('#hint');
-let args={},scale=4,offset=[0,0],chosen=null,drag=null,pan=false,epoch='',width=600,calibrationPoints=[],image=null,imageId='';
+let args={},scale=4,offset=[0,0],chosen=null,drag=null,pan=false,epoch='',width=600,calibrationPoints=[],image=null,imageId='',portraits={},viewEpoch='';
 function send(type,extra={}){parent.postMessage({isStreamlitMessage:true,type,...extra},'*')}
 function world(p){return [(p[0]-offset[0])/scale,(offset[1]-p[1])/scale]}
 function screen(p){return [offset[0]+p[0]*scale,offset[1]-p[1]*scale]}
@@ -28,7 +28,7 @@ function local(e){const r=canvas.getBoundingClientRect();return [e.clientX-r.lef
 function bounds(){const b=args.background;return b?[[0,0],[b.width*b.metres_per_pixel,-b.height*b.metres_per_pixel]]:[]}
 function fit(locationOnly=false){
  width=canvas.clientWidth;
- let ps=locationOnly?bounds():(args.actors||[]).map(a=>a.position).concat(bounds());
+ let ps=locationOnly?bounds():(args.actors||[]).length?(args.actors||[]).map(a=>a.position):bounds();
  if(!ps.length)ps=[[0,0]];
  const region=args.mode==='area'?args.center:(args.actors||[]).find(a=>a.id===args.source)?.position;
  const radius=args.mode==='area'?args.radius:30;
@@ -56,25 +56,28 @@ function draw(){
   return;
  }
  const actor=(args.actors||[]).find(a=>a.id===args.source),dest=chosen||args.center;
+ if(actor&&args.mode==='target'&&Number.isFinite(args.range_m))ring(actor.position,args.range_m,'#bfa2da','#bfa2da0c');
  if(actor&&args.mode==='move')ring(actor.position,30,'#91c5a6','#91c5a60c');
  if(dest&&args.radius)ring(dest,args.radius,'#ffb45e','#ff8f0033');
  if(dest&&actor){
   const dist=Math.hypot(dest[0]-actor.position[0],dest[1]-actor.position[1]);ruler(actor.position,dest,dist.toFixed(1)+' м');
   const b=screen(dest);ctx.beginPath();ctx.arc(...b,5,0,Math.PI*2);ctx.fill();
   hint.textContent=(args.mode==='area'?'Центр области':'Перемещение')+': '+dist.toFixed(1)+' м'+(args.mode==='move'&&dist>30?' · больше 30 м':'');
- }else hint.textContent=pan?'Потяни поле для просмотра':'Потяни свою фигурку или коснись нужной точки';
+ }else hint.textContent=pan?'Потяни поле для просмотра':args.mode==='target'?'Коснись фигурки цели. Подсвеченный круг — дальность способности.':'Потяни свою фигурку или коснись нужной точки';
  (args.actors||[]).forEach((a,index)=>{
-  const s=screen(a.id===args.source&&dest&&args.mode!=='area'?dest:a.position);
+  const s=screen(a.id===args.source&&dest&&['move','setup'].includes(args.mode)?dest:a.position);
+  const selected=a.id===args.target;
   const hit=dest&&args.radius&&Math.hypot(a.position[0]-dest[0],a.position[1]-dest[1])<=args.radius;
-  ctx.beginPath();ctx.arc(...s,14,0,Math.PI*2);ctx.fillStyle=a.enemy?'#d66c7f':'#91c5a6';ctx.fill();ctx.strokeStyle=hit?'#ffb45e':a.id===args.source?'#dcc0f3':'#4c3e55';ctx.lineWidth=hit||a.id===args.source?3:1;ctx.stroke();ctx.fillStyle='#1b1520';ctx.textAlign='center';ctx.fillText(String(index+1),s[0],s[1]+5);ctx.textAlign='left';
+  const tokenRadius=Math.max(12,Math.min(18,scale*3));ctx.beginPath();ctx.arc(...s,tokenRadius,0,Math.PI*2);ctx.fillStyle=a.enemy?'#d66c7f':'#91c5a6';ctx.fill();ctx.strokeStyle=hit||selected?'#ffb45e':a.id===args.source?'#dcc0f3':'#4c3e55';ctx.lineWidth=hit||selected||a.id===args.source?3:1;ctx.stroke();ctx.fillStyle='#1b1520';ctx.textAlign='center';const portrait=portraits[a.id];if(portrait?.complete&&portrait.naturalWidth){ctx.save();ctx.beginPath();ctx.arc(...s,tokenRadius-2,0,Math.PI*2);ctx.clip();const side=Math.min(portrait.naturalWidth,portrait.naturalHeight);ctx.drawImage(portrait,(portrait.naturalWidth-side)/2,0,side,side,s[0]-tokenRadius+2,s[1]-tokenRadius+2,2*tokenRadius-4,2*tokenRadius-4);ctx.restore()}else ctx.fillText(a.id==='ally'?'Ш':String(index+1),s[0],s[1]+5);ctx.textAlign='left';ctx.fillStyle='#17121d';ctx.fillRect(s[0]-18,s[1]+23,36,5);ctx.fillStyle='#91c5a6';ctx.fillRect(s[0]-18,s[1]+23,36*Math.max(0,Math.min(1,a.hp/Math.max(1,a.hp_max))),5);if(a.active){ctx.fillStyle='#ddc4ee';ctx.fillText('▶',s[0]-29,s[1]+4)}if(a.effects?.length){ctx.fillStyle='#ffb45e';ctx.fillText('◆',s[0]+20,s[1]-12)}
  });
  ctx.fillStyle='#17121dcc';ctx.fillRect(5,354,Math.min(width-10,10*scale+16),40);ctx.fillStyle='#e9d7f7';ctx.fillRect(12,382,10*scale,2);ctx.fillText('10 м',12,374);
 }
-canvas.onpointerdown=e=>{canvas.setPointerCapture(e.pointerId);const p=local(e);drag={p,offset:[...offset],pan};if(!pan&&args.mode!=='calibrate'){chosen=world(p);draw()}};
-canvas.onpointermove=e=>{if(!drag)return;const p=local(e);if(drag.pan)offset=[drag.offset[0]+p[0]-drag.p[0],drag.offset[1]+p[1]-drag.p[1]];else if(args.mode!=='calibrate')chosen=world(p);draw()};
+canvas.onpointerdown=e=>{canvas.setPointerCapture(e.pointerId);const p=local(e);drag={p,offset:[...offset],pan};if(!pan&&!['calibrate','target'].includes(args.mode)){chosen=world(p);draw()}};
+canvas.onpointermove=e=>{if(!drag)return;const p=local(e);if(drag.pan)offset=[drag.offset[0]+p[0]-drag.p[0],drag.offset[1]+p[1]-drag.p[1]];else if(!['calibrate','target'].includes(args.mode))chosen=world(p);draw()};
 canvas.onpointerup=e=>{
  if(drag&&!drag.pan){
-  if(args.mode==='calibrate'){
+  if(args.mode==='target'){const p=local(e);let hit=(args.actors||[]).map(a=>({a,d:Math.hypot(...screen(a.position).map((v,i)=>v-p[i]))})).filter(x=>x.d<=24).sort((a,b)=>a.d-b.d)[0];if(hit)send('streamlit:setComponentValue',{value:{epoch:args.epoch,target:hit.a.id},dataType:'json'});
+  }else if(args.mode==='calibrate'){
    const p=world(local(e)),b=args.background,pixel=[p[0],-p[1]];
    if(pixel[0]>=0&&pixel[0]<=b.width&&pixel[1]>=0&&pixel[1]<=b.height){if(calibrationPoints.length===2)calibrationPoints=[];calibrationPoints.push(pixel);draw();send('streamlit:setComponentValue',{value:{epoch:args.epoch,points:calibrationPoints},dataType:'json'})}
    else hint.textContent='Выбери точку внутри изображения';
@@ -93,14 +96,16 @@ document.querySelector('#reset').onclick=()=>{calibrationPoints=[];draw();send('
 window.addEventListener('message',e=>{
  if(e.source!==parent||e.data.type!=='streamlit:render')return;
  args=e.data.args;
+ (args.actors||[]).forEach(a=>{if(a.portrait&&portraits[a.id]?._source!==a.portrait){const p=new Image();portraits[a.id]=p;p._source=a.portrait;p.onload=draw;p.src=a.portrait}});
  if(imageId!==args.background?.id){imageId=args.background?.id||'';image=null;if(args.background){image=new Image();image.onload=draw;image.src=args.background.src}}
- if(epoch!==args.epoch){epoch=args.epoch;chosen=null;calibrationPoints=[];fit()}
+ if(epoch!==args.epoch){epoch=args.epoch;chosen=null;calibrationPoints=[]}if(viewEpoch!==(args.view_epoch||args.epoch)){viewEpoch=args.view_epoch||args.epoch;fit()}
+ const abilities=document.querySelector('#abilities');abilities.replaceChildren();(args.palette||[]).forEach(a=>{const b=document.createElement('button');b.textContent=a.name+' · '+a.mana+' MP'+(a.cd?' · КД '+a.cd:'');b.disabled=Boolean(a.reason);b.title=a.reason||a.name;b.className=a.id===args.active_ability?'selected':'';b.onclick=()=>send('streamlit:setComponentValue',{value:{epoch:args.epoch,ability:a.id},dataType:'json'});abilities.append(b)});abilities.hidden=!(args.palette||[]).length;
  document.querySelector('#reset').hidden=args.mode!=='calibrate';document.querySelector('#location').hidden=!args.background;
  document.querySelector('#fit').textContent=args.mode==='calibrate'?'Всё изображение':'Все участники';draw();
  const legend=document.querySelector('#legend');legend.replaceChildren();
- (args.actors||[]).forEach((a,i)=>{const label=document.createElement('span');label.textContent=(i+1)+'. '+a.name;label.style.color=a.enemy?'#ed9daa':'#91c5a6';legend.append(label)});
+ (args.actors||[]).forEach((a,i)=>{const label=document.createElement('button');label.textContent=(a.active?'▶ ':'')+(i+1)+'. '+a.name+' · '+a.hp+'/'+a.hp_max+(a.effects?.length?' ◆':'');label.style.padding='4px 7px';label.title=(a.effects||[]).join(', ');label.onclick=()=>{if(args.mode==='target')send('streamlit:setComponentValue',{value:{epoch:args.epoch,target:a.id},dataType:'json'})};label.style.color=a.enemy?'#ed9daa':'#91c5a6';legend.append(label)});
  send('streamlit:setFrameHeight',{height:document.body.scrollHeight});
 });
-window.onresize=()=>{draw();send('streamlit:setFrameHeight',{height:document.body.scrollHeight})};
+window.onresize=()=>{const p=world([width/2,200]);offset=[canvas.clientWidth/2-p[0]*scale,200+p[1]*scale];draw();send('streamlit:setFrameHeight',{height:document.body.scrollHeight})};
 send('streamlit:componentReady',{apiVersion:1});send('streamlit:setFrameHeight',{height:490});
 </script></html>
