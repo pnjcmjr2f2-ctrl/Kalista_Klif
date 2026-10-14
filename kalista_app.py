@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v34 · полный лист игрока
+Калиста Клиф — v35 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -1505,7 +1505,7 @@ elif page=="Экипировка":
             if st.button("Надеть",key="edit_root_equip_"+item["id"]):apply_view_equip(item["id"])
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Экипировка</div>", unsafe_allow_html=True)
     for slot,it in data["equipment"].items():
-        with st.expander(f"{'🔹' if it.get('name') else '▫️'} {slot.replace(' (посох)','')}: {it.get('name') or '—'}"):
+        with st.expander(f"{rarity_label(it).split()[0] if it.get('name') else '▫️'} {slot.replace(' (посох)','')}: {it.get('name') or '—'}"):
             if it.get("growth"):st.caption(f"Исходные бонусы на уровне {it['growth']['anchor_level']}; текущие значения с ростом — в обычном просмотре.")
             it["rarity"]=st.selectbox("Редкость",RARITIES,index=RARITIES.index(it.get("rarity","Обычный")),key=f"rarity_{slot}")
             it["name"]=st.text_input("Название",it.get("name",""),key=f"n{slot}")

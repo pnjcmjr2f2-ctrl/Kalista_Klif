@@ -13,6 +13,7 @@ def ensure_growth(item,owner,level,root=False):
     if any(isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) for v in basis.values()):raise ValueError('Неверный бонус легендарного предмета')
     if 'growth' not in item:item['growth']=dict(owner=owner,anchor_level=level,rate=.02,basis=basis,last_level=level)
     growth=item['growth']
+    if not isinstance(growth,dict):raise ValueError('Повреждена привязка легендарного предмета')
     if growth.get('owner')!=owner:raise ValueError('Легендарный предмет привязан к другому герою; нужна перепривязка')
     anchor=growth.get('anchor_level')
     if not isinstance(anchor,int) or isinstance(anchor,bool) or not 1<=anchor<=1650 or growth.get('rate')!=.02:raise ValueError('Неверная формула роста легендарки')

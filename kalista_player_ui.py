@@ -68,7 +68,7 @@ def overview(data,root):
         st.progress(min(1,p['xp']/xp_goal),text=f"Опыт уровня: {p['xp']} / {xp_goal} XP · до следующего уровня: {max(0,xp_goal-p['xp'])}")
     else:
         st.progress(0,text=f"Опыт: {p['xp']} XP · порог не задан" if p['xp_known'] else 'Опыт не заполнен · порог не задан')
-    tiles([('Уровень',p['level']),('Атака',p['attack']),('Броня',a['armor']),('Уклонение',f"{e.evasion_chance(a)*100:.1f}%"),('Шанс крита',f"{p['critical_chance']:.2f}%"),('Критический урон',p['critical_damage']),('Свободные очки',p['free_points'])])
+    tiles([('Уровень',p['level']),('Атака',p['attack']),('Броня',a['armor']),('Сила заклинаний',f"+{a.get('spell_power',0)*100:g}%"),('Уклонение',f"{e.evasion_chance(a)*100:.1f}%"),('Шанс крита',f"{p['critical_chance']:.2f}%"),('Критический урон',p['critical_damage']),('Свободные очки',p['free_points'])])
     with st.expander('Сопротивления и эффекты'):
         tiles([(key,str(value)+'%') for key,value in a['resists'].items()])
         for effect in a['effects']:st.write(e.effect_lifetime(effect))
@@ -199,7 +199,7 @@ def attributes(data,root):
         c1,c2,c3=st.columns(3)
         c1.metric('Атака',p['attack']);c1.metric('Критический урон',p['critical_damage'])
         c2.metric('Уклонение',f"{e.evasion_chance(a)*100:.1f}%");c2.metric('Инициатива',a.get('initiative',0))
-        c3.metric('Броня',a['armor']);c3.metric('Критический удар',f"{p['critical_chance']:.2f}%")
+        c3.metric('Броня',a['armor']);c3.metric('Критический удар',f"{p['critical_chance']:.2f}%");c3.metric('Сила заклинаний',f"+{a.get('spell_power',0)*100:g}%")
     with st.expander('Сопротивления стихиям'):
         cols=st.columns(6)
         for index,element in enumerate(e.ELEMENTS):cols[index].metric(element,str(e.effective_defense(a,element))+'%')

@@ -72,7 +72,7 @@ def player_view(section,data,root,commit):
     selected=st.selectbox('Редкость предметов',['Все']+list(e.RARITIES),key='ps_view_rarity_'+section) if section in ('Снаряжение','Инвентарь') else 'Все'
     if section=='Характеристики':
         show_stats(p['stats'].items());st.caption(f"Уровень {p['level']} · Свободные очки {p['free_points']}")
-        show_stats([('Броня',a['armor']),('Атака',p['attack']),('Критический урон',p['critical_damage']),('Шанс крита',str(p['critical_chance'])+'%')])
+        show_stats([('Броня',a['armor']),('Атака',p['attack']),('Критический урон',p['critical_damage']),('Шанс крита',str(p['critical_chance'])+'%'),('Уклонение',f"{e.evasion_chance(a)*100:.1f}%"),('Сила заклинаний',f"+{a.get('spell_power',0)*100:g}%")])
         with st.expander('Сопротивления'):show_stats([(x,str(e.effective_defense(a,x))+'%') for x in e.ELEMENTS])
         with st.expander('Расовые и классовые способности'):st.write(p['abilities'])
     elif section=='Заклинания и способности':show_book(a['actions'])

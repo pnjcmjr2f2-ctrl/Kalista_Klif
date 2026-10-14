@@ -170,6 +170,9 @@ def recalc(d):
     spi=total_stat(d,"Дух"); end=total_stat(d,"Выносливость"); agi=total_stat(d,"Ловкость")
     d["mana_max"]=intel*10
     d["hp_max"]=d["level"]*20 + end*10
+    # Removing gear can lower maxima; preserve spent resources, clamp excess only.
+    d["hp_current"]=min(d["hp_current"],d["hp_max"])
+    d["mana_current"]=min(d["mana_current"],d["mana_max"])
     d["spell_power"]=max(0,(intel/5+d.get("equip_spell_power",0))/100)
     d["mana_regen"]=round(spi*0.5)
     d["initiative"]=round(agi/2 + wis/4)
