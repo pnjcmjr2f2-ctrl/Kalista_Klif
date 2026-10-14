@@ -256,7 +256,7 @@ def biography(data,root):
         if st.form_submit_button('Сохранить персонажа'):commit(root,'identity',values,expected)
 
 def abilities(data,root):
-    expected=baseline(data,'actions');actions=[a for a in data['ally']['actions'] if a.get('rule') not in ('move_close','move_far')]
+    expected=baseline(data,'actions');actions=[a for a in data['ally']['actions'] if a.get('rule') not in ('move_close','move_far','move_point')]
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Заклинания и способности</div>",unsafe_allow_html=True)
     st.caption('Перезарядка указана в личных ходах. 0 — без перезарядки. Применение — на странице «Бой».')
     for action in actions:
@@ -284,6 +284,8 @@ def action_form(root,action,expected):
             amount=st.number_input('Базовая величина',min_value=0,value=x['amount'],key=prefix+'_amount');shared=st.checkbox('Использовать атаку из характеристик',x['shared_attack'],key=prefix+'_shared')
             dtype=st.selectbox('Тип урона',e.DAMAGE_TYPES,index=e.DAMAGE_TYPES.index(x['damage_type']),key=prefix+'_dtype')
             reach=st.selectbox('Дальность атаки',['Ближняя','Дальняя','Любая'],index=['Ближняя','Дальняя','Любая'].index(x.get('reach','Ближняя')),format_func=lambda v:e.reach_label({'reach':v}),key=prefix+'_reach')
+            range_m=st.number_input('Дальность в метрах (0 — не задана)',min_value=0.,value=float(x.get('range_m') or 0),key=prefix+'_range_m') or None
+            radius=st.number_input('Радиус массовой атаки (м; 0 — без области)',min_value=0.,value=float(x.get('area_radius_m',0)),key=prefix+'_radius')
             mana=st.number_input('Стоимость маны',min_value=0,value=x['mana_cost'],key=prefix+'_mana');cooldown=st.number_input('Перезарядка (личные ходы)',min_value=0,value=x['cooldown'],key=prefix+'_cd')
             hits=st.number_input('Попаданий',min_value=1,max_value=10,value=x['hits'],key=prefix+'_hits')
         with editor_tabs[1]:
@@ -300,7 +302,7 @@ def action_form(root,action,expected):
         with editor_tabs[3]:
             desc=st.text_area('Правила и описание',x['description'],key=prefix+'_desc');ready=st.checkbox('Правила и числа согласованы с ведущим',not x['needs_setup'],key=prefix+'_ready')
         if st.form_submit_button('Сохранить способность'):
-            new=deepcopy(x);new.update(name=name,kind=kind,amount=amount,shared_attack=shared,damage_type=dtype,reach=reach,mana_cost=mana,cooldown=cooldown,hits=hits,effect_kind=effect,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,charges_max=charges,charges_left=left,armor_penetration=penetration,extra_dice_count=dice,extra_dice_sides=sides,reaction=reaction,manual_recharge=manual,description=desc,needs_setup=not ready)
+            new=deepcopy(x);new.update(name=name,kind=kind,amount=amount,shared_attack=shared,damage_type=dtype,reach=reach,mana_cost=mana,cooldown=cooldown,hits=hits,effect_kind=effect,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,charges_max=charges,charges_left=left,armor_penetration=penetration,extra_dice_count=dice,extra_dice_sides=sides,reaction=reaction,manual_recharge=manual,description=desc,needs_setup=not ready,range_m=range_m,area_radius_m=radius)
             values=[new if old['id']==x['id'] else old for old in expected] if action else expected+[new]
             commit(root,'actions',values,expected)
     if action and st.button('Удалить способность',key=prefix+'_delete'):commit(root,'actions',[old for old in expected if old['id']!=x['id']],expected)

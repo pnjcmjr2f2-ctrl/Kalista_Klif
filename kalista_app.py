@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v37 · полный лист игрока
+Калиста Клиф — v38 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
 import streamlit as st
 from kalista_view import editing,gm_view
+from kalista_map import separation,ability_range,area_targets,check_point_range
 from kalista_loot import settings as loot_settings,assign_loot,equip_root_reserve,DEFAULT_CHANCES,WEIGHTS
 import json
 import random
@@ -293,6 +294,9 @@ def render_selected_spell(data, target):
                             (f" · КД {spells[value]['cd_left']}" if spells[value]['cd_left'] else ""))
     spell = spells[sid]
     action = spell_action(spell)
+    target_token=next((t for t,v in participants(data) if v is target),None)
+    if data.get('distance_mode')=='meters' and spell.get('area_radius_m',0):
+        render_area_spell(data,spell,target);render_spell_extras(data);return
     dual, soul = spell_bonuses(data, spell)
     raw = spell_raw(spell["base"], data.get("spell_power", 0), dual, soul) if action == "damage" else spell.get("effect_value", 0)
     st.caption(f"Мана {spell['mana']} · КД {spell.get('cd_left', 0)}/{spell.get('cd_max', 0)}")
@@ -350,8 +354,8 @@ def render_selected_spell(data, target):
     if action == "heal": can = can and raw > 0
     if action == "damage": can = can and target[hp_fields(target)[0]] > 0
     blocked=[]
-    if action=='damage' and target_token:
-        try:check_reach(data,'player',dict(kind='damage',damage_type='Тьма',reach=spell.get('reach','Дальняя')),target_token)
+    if target_token and (action=='damage' or spell.get('range_m') is not None):
+        try:check_reach(data,'player',dict(kind='damage',damage_type='Тьма',reach=spell.get('reach','Дальняя'),range_m=spell.get('range_m')),target_token)
         except ValueError as exc:blocked.append(str(exc));can=False
     if any(x['kind']=='fear' for x in data.get('effects',[])):blocked.append('Калиста под страхом');can=False
     if data['combat_active'] and sum(x['source']=='player' and x.get('counts',True) for x in data.get('turn_actions',[]))>=2:blocked.append('действия закончились')
@@ -375,6 +379,10 @@ def render_selected_spell(data, target):
         if action == "damage" and target[hp_fields(target)[0]] == 0: reasons.append("у цели 0 HP")
         if action in ("shield", "heal") and (shield_amount if action == "shield" else raw) == 0: reasons.append("не задана сила эффекта")
         st.caption("Применение недоступно: " + ", ".join(reasons))
+    render_spell_extras(data)
+
+
+def render_spell_extras(data):
     with st.expander("Предметы Калисты", expanded=False):
         usable = [(i, item) for i, item in enumerate(data["inventory"]) if item.get("use") and item["qty"] > 0 and item["use"]["value"] > 0]
         if not usable:
@@ -724,17 +732,92 @@ def render_queue(data, token):
             log(f"{target['name']}: обычная инициатива восстановлена"); persist_and_rerun()
 
 
+def render_area_selection(data,source,ability,target,prefix):
+    from kalista_map import area_targets,check_point_range,map_svg,ability_range,map_legend
+    limit=ability_range(ability)
+    st.caption('Дальность: '+(f'{limit:g} м' if limit is not None else 'не задана')+f" · радиус: {ability['area_radius_m']:g} м")
+    if st.session_state.get(prefix+'_anchor')!=target:
+        st.session_state[prefix+'_x'],st.session_state[prefix+'_y']=data['positions'][target]
+        st.session_state[prefix+'_anchor']=target
+    columns=st.columns(2)
+    center=[columns[0].number_input('Центр X (м)',min_value=-1000000.,max_value=1000000.,step=1.,key=prefix+'_x'),columns[1].number_input('Центр Y (м)',min_value=-1000000.,max_value=1000000.,step=1.,key=prefix+'_y')]
+    tokens=area_targets(data,center,ability['area_radius_m'])
+    with st.expander('Область на карте',expanded=True):
+        st.image(map_svg(data,center,ability['area_radius_m']),width=600)
+        st.caption(map_legend(data))
+        st.caption('Зелёные — герои и союзники, красные — враги. Оранжевый круг — область попадания. Координаты в метрах.')
+    problem=''
+    try:check_point_range(data,source,ability,center)
+    except ValueError as exc:problem=str(exc);st.warning(problem)
+    if not tokens:problem='В области нет живых целей';st.warning(problem)
+    friendly=[participant(data,t)['name'] for t in tokens if combat_side(data,t)!='Враг']
+    if friendly:st.warning('Заденет героев и союзников: '+', '.join(friendly))
+    st.caption('В области: '+(', '.join(participant(data,t)['name'] for t in tokens) or 'никого'))
+    return center,tokens,problem
+
+
+def render_area_spell(data,spell,target):
+    from kalista_area import cast_area_spell
+    token=next(t for t,a in participants(data) if a is target)
+    center,tokens,problem=render_area_selection(data,'player',spell,token,'spell_area_'+str(spell['id']))
+    dual,soul=spell_bonuses(data,spell);raw=spell_raw(spell['base'],data['spell_power'],dual,soul)
+    st.caption(f"Мана {spell['mana']} · КД {spell.get('cd_left',0)}/{spell.get('cd_max',0)} · одно действие")
+    for t in tokens:
+        a=participant(data,t);preview=spell_damage_preview(data,spell,a,raw)
+        st.caption(f"{a['name']}: −{preview['hp_loss']} HP · щит поглотит {preview['absorbed']} · без учёта крита")
+    used=sum(x['source']=='player' and x.get('counts',True) for x in data['turn_actions'])
+    reason=problem or ('У Калисты 0 HP' if data['hp_current']<=0 else '') or ('Не хватает маны' if data['mana_current']<spell['mana'] else '') or ('Перезарядка' if spell.get('cd_left') else '') or ('Действия закончились' if data['combat_active'] and used>=2 else '') or ('Калиста под страхом' if any(x['kind']=='fear' for x in data['effects']) else '')
+    if reason:st.caption('Недоступно: '+reason)
+    if st.button('Применить массовую атаку',key='cast_area_'+str(spell['id']),type='primary',disabled=bool(reason),use_container_width=True):
+        try:
+            for message in cast_area_spell(data,spell,center):log(message)
+            persist_and_rerun('Массовая атака: '+spell['name'])
+        except ValueError as exc:st.error(str(exc))
+    with st.expander('Правила массовой атаки'):
+        st.write(spell.get('desc',''))
+        st.caption('Каждая цель получает полный урон. Крит и эффекты проверяются независимо. Мана, Пепел/Тень и перезарядка учитываются один раз за каст.')
+
+
+def render_tactical_map(data,source,target,player_mode=False):
+    from kalista_map import map_svg,point,map_legend
+    if data.get('distance_mode')!='meters':return
+    with st.expander('Карта и перемещение по координатам'):
+        st.image(map_svg(data),width=600);st.caption(map_legend(data));st.caption('Координаты в метрах. Дистанция по прямой; препятствия пока не учитываются. Ближняя атака: до 5 м. Перемещение: до 30 м за ход.')
+        a=participant(data,source);action=next(x for x in a['actions'] if x.get('rule')=='move_point')
+        x,y=data['positions'][source]
+        with st.form('map_move_'+source):
+            columns=st.columns(2);destination=[columns[0].number_input('Куда X (м)',min_value=-1000000.,max_value=1000000.,value=float(x),step=1.),columns[1].number_input('Куда Y (м)',min_value=-1000000.,max_value=1000000.,value=float(y),step=1.)]
+            disabled=(data['combat_active'] and a.get('movement_used')) or a[hp_fields(a)[0]]<=0 or any(e['kind']=='fear' for e in a['effects'])
+            if st.form_submit_button('Предложить перемещение' if player_mode else 'Переместиться',disabled=disabled):
+                try:
+                    if player_mode:submit_player_action(data,action['id'],[source],False,destination=destination);st.success('Перемещение предложено ведущему')
+                    else:
+                        for message in perform_action(data,source,action['id'],[source],destination=destination):log(message)
+                        persist_and_rerun('Перемещение на карте')
+                except ValueError as exc:st.error(str(exc))
+        if editing() and not player_mode:
+            with st.expander('Расстановка участников · ведущий'):
+                selected=st.selectbox('Кого поставить',[t for t,_ in participants(data)],format_func=lambda t:participant_label(data,t),key='map_edit_actor')
+                with st.form('map_edit_position_'+selected):
+                    x,y=data['positions'][selected];columns=st.columns(2)
+                    location=[columns[0].number_input('Позиция X (м)',min_value=-1000000.,max_value=1000000.,value=float(x)),columns[1].number_input('Позиция Y (м)',min_value=-1000000.,max_value=1000000.,value=float(y))]
+                    if st.form_submit_button('Сохранить позицию'):
+                        data['positions'][selected]=point(location);data['map_revision']=data.get('map_revision',0)+1
+                        invalidate_player_requests(data,'Расстановка изменилась; предложи действие заново')
+                        persist_and_rerun('Расстановка на карте')
+
+
 def render_movement(data,source_token,target_token,player_mode=False):
     source=participant(data,source_token)
     if data['combat_active']:
         used=sum(x['source']==source_token and x.get('counts',True) for x in data.get('turn_actions',[]))
         st.caption(f'Действия: {max(0,2-used)}/2 · Перемещение: '+('использовано' if source.get('movement_used') else 'доступно'))
-    st.caption('Дистанция до цели: '+distance_between(data,source_token,target_token))
+    st.caption('Дистанция до цели: '+(f'{separation(data,source_token,target_token):.1f} м · ' if data.get('distance_mode')=='meters' else '')+distance_between(data,source_token,target_token))
     with st.container(key='movement_controls'):
         cols=st.columns(2)
         for index,rule in enumerate(('move_close','move_far')):
             action=next((a for a in source.get('actions',[]) if a.get('rule')==rule),None)
-            if action and cols[index].button(action['name'],key=f'move_{source_token}_{rule}',disabled=source_token==target_token or source[hp_fields(source)[0]]<=0 or any(x['kind']=='fear' for x in source.get('effects',[])) or (data['combat_active'] and source.get('movement_used',False))):
+            if action and cols[index].button(action['name'],key=f'move_{source_token}_{rule}',disabled=source_token==target_token or (data.get('distance_mode')=='meters' and rule=='move_close' and separation(data,source_token,target_token)<=5) or source[hp_fields(source)[0]]<=0 or any(x['kind']=='fear' for x in source.get('effects',[])) or (data['combat_active'] and source.get('movement_used',False))):
                 try:
                     if player_mode:submit_player_action(data,action['id'],[target_token],False);st.success('Перемещение предложено ведущему')
                     else:
@@ -769,6 +852,7 @@ def render_battle(data):
                                   format_func=lambda value: participant_label(data, value))
         render_focus_cards(data,active_token,token)
         render_movement(data,active_token,token)
+        render_tactical_map(data,active_token,token)
         if active_token == "player": render_selected_spell(data, participant(data, token))
         else:
             with st.container(key="turn_action"):
@@ -998,7 +1082,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     if not source.get('actions'):
         source['actions']=[action_template('Атака',amount=source.get('attack_damage',0),shared_attack=True,damage_type=source.get('attack_type','Физический')),
                            action_template('Лечение',kind='heal',amount=source.get('heal_amount',0))]
-    actions={a['id']:a for a in source['actions'] if a.get('rule') not in ('move_close','move_far')}
+    actions={a['id']:a for a in source['actions'] if a.get('rule') not in ('move_close','move_far','move_point')}
     if not actions:
         st.caption('Атакующих способностей пока нет. Перемещение доступно в отдельном блоке боя.')
         return
@@ -1022,8 +1106,12 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     valid_tokens=[t for t,_ in visible_battle_participants(data)]
     if target_key in st.session_state:
         st.session_state[target_key]=[t for t in st.session_state[target_key] if t in valid_tokens]
-    with st.expander('Несколько целей / изменить цели'):
-        victims=st.multiselect('Цели',valid_tokens, default=initial if target_key not in st.session_state else None, format_func=lambda token: participant_label(data,token), key=target_key,placeholder='Выбери цели')
+    area_center=None
+    if data.get('distance_mode')=='meters' and action.get('area_radius_m',0):
+        area_center,victims,area_problem=render_area_selection(data,source_token,action,victim_token,'action_area_'+aid)
+    else:
+        with st.expander('Несколько целей / изменить цели'):
+            victims=st.multiselect('Цели',valid_tokens, default=initial if target_key not in st.session_state else None, format_func=lambda token: participant_label(data,token), key=target_key,placeholder='Выбери цели')
     st.caption('Применится к: '+(', '.join(participant(data,t)['name'] for t in victims) or 'цель не выбрана'))
     if action['kind']=='damage' and any(combat_side(data,t) in ('Героиня','Союзник') for t in victims) and combat_side(data,source_token)!='Враг':
         st.warning('Выбрана дружественная цель: действие нанесёт ей урон.')
@@ -1037,8 +1125,8 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     for token in victims:
         target=participant(data,token)
         if action['kind']=='damage':
-            st.caption('Дистанция: '+distance_between(data,source_token,token))
-            try:result=preview_action(data,source_token,action,token,critical,manual_amount)
+            st.caption('Дистанция: '+(f'{separation(data,source_token,token):.1f} м · ' if data.get('distance_mode')=='meters' else '')+distance_between(data,source_token,token))
+            try:result=preview_action(data,source_token,action,token,critical,manual_amount,area_center=area_center)
             except ValueError as exc:st.warning(str(exc));continue
             if result.get('miss'):st.warning('Дальняя атака при враге рядом: 50% шанс промаха за попадание.')
             if result.get('dodge'):st.caption(f"Уклонение цели: {result['dodge']*100:.1f}% на каждое попадание")
@@ -1067,16 +1155,19 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     if not victims:reasons.append('выбери цель')
     if data['combat_active'] and used>=2 and not reaction and not action.get('rule','').startswith('move_'):reasons.append('действия закончились')
     for token in victims:
-        try:check_reach(data,source_token,action,token)
+        try:
+            if area_center is not None:check_point_range(data,source_token,action,area_center)
+            else:check_reach(data,source_token,action,token)
         except ValueError as exc:reasons.append(str(exc));unavailable=True
+    if area_center is not None and area_problem:reasons.append(area_problem);unavailable=True
     if reasons:st.caption('Недоступно: '+'; '.join(dict.fromkeys(reasons)))
     if st.button('Предложить действие' if player_mode else 'Применить действие',key=f'perform_{source_token}_{aid}',type='primary',disabled=unavailable,use_container_width=True):
         try:
             if player_mode:
-                submit_player_action(data,aid,victims,critical)
+                submit_player_action(data,aid,victims,critical,area_center=area_center)
                 st.success('Предложение отправлено ведущему')
             else:
-                for message in perform_action(data,source_token,aid,victims,critical,reaction,manual_amount): log(message)
+                for message in perform_action(data,source_token,aid,victims,critical,reaction,manual_amount,area_center=area_center): log(message)
                 persist_and_rerun('Действие: '+action['name'])
         except (ValueError, OSError) as exc: st.error(str(exc))
     with st.expander('Описание способности'):
@@ -1104,6 +1195,8 @@ def render_action_editor(data,token):
                 hits=st.number_input('Попаданий',min_value=1,max_value=10,value=action['hits'])
                 dtype=st.selectbox('Тип урона',DAMAGE_TYPES,index=DAMAGE_TYPES.index(action['damage_type']))
                 reach=st.selectbox('Дальность атаки',['Ближняя','Дальняя','Любая'],index=['Ближняя','Дальняя','Любая'].index(action.get('reach','Ближняя')))
+                range_m=st.number_input('Дальность в метрах (0 — не задана)',min_value=0.,value=float(action.get('range_m') or 0)) or None
+                radius=st.number_input('Радиус массовой атаки (м; 0 — без области)',min_value=0.,value=float(action.get('area_radius_m',0)))
                 cooldown=st.number_input('Перезарядка: начала личного хода',min_value=0,value=action['cooldown'])
                 mana_cost=st.number_input('Стоимость маны (0 — без маны)',min_value=0,value=action['mana_cost'])
             with editor_tabs[1]:
@@ -1124,7 +1217,7 @@ def render_action_editor(data,token):
                 ready=st.checkbox('Боевые числа и правила этого действия подтверждены',not action['needs_setup'])
             if st.form_submit_button('Сохранить действие'):
                 candidate=deepcopy(data);item=next(a for a in participant(candidate,token)['actions'] if a['id']==aid)
-                item.update(name=name,kind=kind,amount=amount,shared_attack=shared,hits=hits,damage_type=dtype,cooldown=cooldown,manual_recharge=manual,effect_kind=effect_kind,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,description=desc,needs_setup=not ready,mana_cost=mana_cost,charges_max=charges,charges_left=charges if charges!=action['charges_max'] else action['charges_left'],armor_penetration=penetration,extra_dice_count=dice_count,extra_dice_sides=dice_sides)
+                item.update(name=name,kind=kind,amount=amount,shared_attack=shared,hits=hits,damage_type=dtype,cooldown=cooldown,manual_recharge=manual,effect_kind=effect_kind,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,description=desc,needs_setup=not ready,mana_cost=mana_cost,charges_max=charges,charges_left=charges if charges!=action['charges_max'] else action['charges_left'],armor_penetration=penetration,extra_dice_count=dice_count,extra_dice_sides=dice_sides,range_m=range_m,area_radius_m=radius)
                 item['reaction']=reaction
                 item['reach']=reach
                 try:
@@ -1169,19 +1262,20 @@ def require_access():
     st.stop()
 
 
-def submit_player_action(data, aid, victims, critical):
+def submit_player_action(data, aid, victims, critical, destination=None, area_center=None):
     latest, rev=read_state(SAVE_FILE)
     latest=migrate(latest if latest is not None else deepcopy(DEFAULT))
+    if latest.get('map_revision',0)!=data.get('map_revision',0):raise ValueError('Карта изменилась; обнови экран')
     if latest['turn_serial']!=data['turn_serial']: raise ValueError('Ход изменился. Обнови экран и предложи действие заново.')
     action=next((a for a in latest['ally']['actions'] if a['id']==aid),None)
     if action is None: raise ValueError('Действие изменилось; обнови экран')
     if latest['combat_active'] and actor_token(get_current_actor(latest))!='ally' and not action.get('reaction'): raise ValueError('Сейчас ход другого участника')
     # Validate by simulation; no game resources are consumed until the GM accepts.
-    perform_action(deepcopy(latest),'ally',aid,victims,False,simulation=True)
+    perform_action(deepcopy(latest),'ally',aid,victims,False,simulation=True,destination=destination,area_center=area_center)
     pending=[r for r in latest.get('player_requests',[]) if r['status']=='pending']
     if pending: raise ValueError('Предыдущее предложение ещё ожидает решения ведущего')
     latest.setdefault('player_requests',[]).append(dict(id=uuid4().hex,action_id=aid,action_name=action['name'],victims=victims,
-                                                      critical=False,turn_serial=latest['turn_serial'],status='pending',message='Ожидает ведущего'))
+                                                      critical=False,turn_serial=latest['turn_serial'],status='pending',message='Ожидает ведущего',destination=destination,area_center=area_center,map_revision=latest.get('map_revision',0)))
     latest['player_requests']=latest['player_requests'][-30:]
     write_state(SAVE_FILE,latest,rev,migrate)
 
@@ -1368,6 +1462,7 @@ def render_player():
         target=remembered_select('Цель действия',tokens,'player_battle_target',default=default_opponent(data,'ally'),format_func=lambda t:participant_label(data,t))
         render_focus_cards(data,'ally',target)
         render_movement(data,'ally',target,player_mode=True)
+        render_tactical_map(data,'ally',target,player_mode=True)
         render_action_panel(data,'ally',target,player_mode=True)
         with st.expander('Подробнее об участнике и цели'):
             render_combatant_card(data,'ally','Твой персонаж',active=True)
@@ -1408,7 +1503,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 24:
+if data.get("schema_version", 5) < 25:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1709,6 +1804,8 @@ elif page=="Заклинания":
                 cur = sp.get("school", "Огонь")
                 sp["school"] = c4.selectbox("Школа", schools, index=schools.index(cur) if cur in schools else 0, key=f"ss{sp['id']}")
                 sp["reach"] = st.selectbox("Дальность способности",["Ближняя","Дальняя","Любая"],index=["Ближняя","Дальняя","Любая"].index(sp.get("reach","Дальняя")),format_func=lambda v:reach_label({"reach":v}),key=f"sr{sp['id']}")
+                sp["range_m"]=st.number_input("Дальность в метрах (0 — не задана)",min_value=0.,value=float(sp.get("range_m") or 0),key=f"srange{sp['id']}") or None
+                sp["area_radius_m"]=st.number_input("Радиус массовой атаки (м; 0 — без области)",min_value=0.,value=float(sp.get("area_radius_m",0)),key=f"sradius{sp['id']}")
                 sp["desc"] = st.text_input("Описание", sp.get("desc",""), key=f"sd{sp['id']}")
                 actions = ["damage", "heal", "shield", "note"]
                 sp["action"] = st.selectbox("Действие", actions, index=actions.index(spell_action(sp)),
@@ -1740,6 +1837,8 @@ elif page=="Заклинания":
         sc = c3.number_input("Перезарядка (раунды)", min_value=0, value=0)
         ss = st.selectbox("Школа", ["Огонь", "Тьма", "Огонь+Тьма"])
         sr = st.selectbox("Дальность способности",["Ближняя","Дальняя","Любая"],index=1,format_func=lambda v:reach_label({"reach":v}))
+        range_m=st.number_input("Дальность в метрах (0 — не задана)",min_value=0.,value=0.) or None
+        radius=st.number_input("Радиус массовой атаки (м; 0 — без области)",min_value=0.,value=0.)
         sd = st.text_input("Описание")
         sg = st.selectbox("Даёт", [None, "pepel", "ten", "both"],
             format_func=lambda x: {None:"Ничего","pepel":"Пепел","ten":"Тень","both":"Оба"}[x])
@@ -1747,7 +1846,7 @@ elif page=="Заклинания":
             nid = max((s.get("id",0) for s in data["spells"]), default=0) + 1
             data["spells"].append({
                 "id": nid, "name": sn.strip(), "base": sb, "mana": sm,
-                "school": ss, "desc": sd, "gives": sg, "reach": sr,
+                "school": ss, "desc": sd, "gives": sg, "reach": sr,"range_m":range_m,"area_radius_m":radius,
                 "cd_max": sc, "cd_left": 0, "dot": None, "range": "Средняя"
             })
             persist_and_rerun()

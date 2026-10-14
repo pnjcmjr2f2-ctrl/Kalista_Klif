@@ -10,6 +10,7 @@ from kalista_progression import xp_needed,initialize_progress,MAX_LEVEL,advance_
 from kalista_rewards import begin_rewards,register_enemy,settle_rewards
 from kalista_rarity import ensure_rarities,RARITIES,rarity_label,rarity_badge
 from kalista_growth import ensure_growth,effective_item,bind_registry
+from kalista_map import ensure_positions,separation,ability_range,validate_ability,check_point_range,area_targets,move,point
 
 ELEMENTS = ["Огонь", "Земля", "Вода", "Воздух", "Тьма", "Свет"]
 
@@ -242,7 +243,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -268,6 +269,11 @@ def migrate(saved):
             ally['sheet_profile']['abilities']='Видящий — позволяет видеть суть вещей.\nСкорострел — две атаки мечом за одно действие.\nКонтратака — 65% после потери HP от прямого ближнего удара; обычный удар мечом без расхода действий.\nДесница Ока — активная способность, +100% урона до конца текущего хода, один раз за бой.'
             fill_warrior_equipment(ally)
         invalidate_player_requests(data,'Правила боя обновились; предложи действие заново')
+    data.setdefault('map_revision',0)
+    nonnegative_int(data['map_revision'],'Версия карты')
+    data.setdefault('distance_mode','legacy')
+    if data['distance_mode'] not in ('legacy','meters'):raise ValueError('Неизвестный режим дистанций')
+    ensure_positions(data)
     data.setdefault('distances',{})
     known={token for token,_ in participants(data)}
     if not isinstance(data['distances'],dict):raise ValueError('Повреждены дистанции')
@@ -336,6 +342,10 @@ def migrate(saved):
         spell.setdefault("cd_left", 0)
         spell.setdefault("dot", None)
         spell.setdefault("reach", "Дальняя")
+        spell.setdefault("area_radius_m",0)
+        spell.setdefault("range_m",None)
+        if spell["range_m"]==0:spell["range_m"]=None
+        validate_ability(spell)
         if spell["reach"] not in ("Ближняя","Дальняя","Любая"):raise ValueError("Неверная дальность заклинания")
     if len({sp["id"] for sp in data["spells"]}) != len(data["spells"]):
         raise ValueError("Повторяющиеся ID заклинаний")
@@ -473,7 +483,7 @@ def migrate(saved):
         if isinstance(item["spell_power"],bool) or not isinstance(item["spell_power"],(int,float)) or not math.isfinite(item["spell_power"]):raise ValueError("Неверная сила заклинаний предмета")
     ensure_rarities(data)
     bind_registry(data)
-    data["schema_version"] = 24
+    data["schema_version"] = 25
     return data
 
 
@@ -923,6 +933,7 @@ def spell_damage_apply(data,spell,target,raw,final_damage=None):
 
 
 def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount=None):
+    if data.get('distance_mode')=='meters' and spell.get('area_radius_m',0):raise ValueError('Выбери точку массовой атаки на карте')
     if crit:raise ValueError("Крит определяется автоматически, назначать его вручную нельзя")
     """Проверяем всё до расходования ресурсов. Решения о целях/крите принимает UI."""
     check_action_limit(data, "player")
@@ -938,8 +949,8 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
         if target is None:
             raise ValueError("Выбери цель")
     target_token=next((t for t,v in participants(data) if v is target),None)
-    if action=='damage' and target_token:
-        check_reach(data,'player',dict(kind='damage',damage_type='Тьма',reach=spell.get('reach','Дальняя')),target_token)
+    if target_token and (action=='damage' or spell.get('range_m') is not None):
+        check_reach(data,'player',dict(kind='damage',damage_type='Тьма',reach=spell.get('reach','Дальняя'),range_m=spell.get('range_m')),target_token)
     amount = spell["base"]
     if action == "shield":
         amount = shadow_shield_amount(data) if spell["name"]=="Покров тьмы" else (spell.get("effect_value", 0) if shield_amount is None else shield_amount)
@@ -1515,6 +1526,7 @@ def fill_warrior_equipment(ally):
 
 
 def distance_between(data,first,second):
+    if data.get('distance_mode')=='meters':return 'Ближняя' if separation(data,first,second)<=5+1e-9 else 'Дальняя'
     return data.get('distances',{}).get('|'.join(sorted((first,second))),'Дальняя' if 'player' in (first,second) and first!=second else 'Ближняя')
 
 
@@ -1533,6 +1545,9 @@ def ranged_miss_chance(data,source_token,ability,target_token):
 
 
 def check_reach(data,source_token,action,target_token):
+    if data.get('distance_mode')=='meters':
+        if action.get('kind','damage')!='damage' and action.get('range_m') is None:return
+        check_point_range(data,source_token,action,data['positions'][target_token]);return
     if action['kind']=='damage' and action.get('reach','Ближняя' if action['damage_type']=='Физический' else 'Дальняя')=='Ближняя' and distance_between(data,source_token,target_token)!='Ближняя':
         raise ValueError('Цель далеко: сначала сблизься; ближняя атака не проходит')
 
@@ -1545,6 +1560,7 @@ def evasion_chance(target):
 
 def counterattack(data,source_token,target_token,result):
     target=participant(data,target_token);source=participant(data,source_token)
+    if source_token==target_token or target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0:return []
     if not target.get('counterattack_enabled') or result['hp_loss']<=0 or distance_between(data,source_token,target_token)!='Ближняя':return []
     if target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0 or any(e['kind']=='fear' for e in target.get('effects',[])):return []
     roll=random.random()
@@ -1574,6 +1590,8 @@ def validate_action_state(data):
         validate_tree(request,dict(id='',action_id='',action_name='',victims=[''],critical=False,turn_serial=0,status='',message=''))
         if not {'id','action_id','action_name','victims','critical','turn_serial','status','message'} <= request.keys(): raise ValueError('Неполное предложение игрока')
         if request['status'] not in ('pending','accepted','rejected') or request['id'] in request_ids: raise ValueError('Неверное предложение игрока')
+        for key in ('destination','area_center'):
+            if request.get(key) is not None:point(request[key])
         request_ids.add(request['id'])
     for token, target in participants(data) + [('npc:'+npc['id'],npc['combat']) for npc in data['npcs']]:
         if 'mana_current' in target or 'mana_max' in target:
@@ -1594,16 +1612,22 @@ def validate_action_state(data):
                 target['actions']=[action_template('Атака',shared_attack=True,damage_type=target.get('attack_type','Физический')),action_template('Лечение',kind='heal',amount=target.get('heal_amount',0),needs_setup=not bool(target.get('heal_amount',0)))]
             existing={a.get('rule') for a in target['actions']}
             target['actions'] += [a for a in movement_actions() if a['rule'] not in existing]
+            if data.get('distance_mode')=='meters' and 'move_point' not in existing:
+                target['actions'].append(action_template('Перемещение на карте',kind='note',rule='move_point',reach='Любая',description='До 30 м за одно перемещение.'))
         ids = set()
         for action in target['actions']:
             for field in ('mana_cost','charges_max','charges_left'): action.setdefault(field,0)
             for field in ('armor_penetration','extra_dice_count','extra_dice_sides'): action.setdefault(field,0)
             action.setdefault('reach','Ближняя' if action['damage_type']=='Физический' else 'Дальняя')
-            if action.get('rule')=='move_far':action['description']='Отойти от всех участников рядом. Одно перемещение за ход, без расхода действий.'
+            if action.get('rule')=='move_far':action['description']='Отойти от выбранной цели на 30 м.' if data.get('distance_mode')=='meters' else 'Отойти от всех участников рядом. Одно перемещение за ход, без расхода действий.'
+            action.setdefault('area_radius_m',0)
+            action.setdefault('range_m',None)
+            if action['range_m']==0:action['range_m']=None
             action.setdefault('multiplier',1.0)
             if action['reach'] not in ('Ближняя','Дальняя','Любая'):raise ValueError('Неверная дальность атаки')
             if not isinstance(action['multiplier'],(int,float)) or not math.isfinite(action['multiplier']) or action['multiplier']<=0:raise ValueError('Неверный множитель урона')
-            if action.get('rule','') not in ('','eye','stance','move_close','move_far'):raise ValueError('Неизвестное правило способности')
+            if action.get('rule','') not in ('','eye','stance','move_close','move_far','move_point'):raise ValueError('Неизвестное правило способности')
+            validate_ability(action)
             action.setdefault('reaction',False)
             if not isinstance(action['reaction'],bool): raise ValueError('Неверный признак реакции')
             validate_tree(action, action_template(''))
@@ -1656,10 +1680,11 @@ def action_damage_factor(target, action):
     return 1.0
 
 
-def preview_action(data, source_token, action, token, critical=False, manual_amount=None):
+def preview_action(data, source_token, action, token, critical=False, manual_amount=None,area_center=None):
     target=participant(data,token)
     amount=action_amount(participant(data,source_token),action,critical) if manual_amount is None else manual_amount
-    check_reach(data,source_token,action,token)
+    if area_center is not None:check_point_range(data,source_token,action,area_center)
+    else:check_reach(data,source_token,action,token)
     amount=round(amount*action.get('multiplier',1))
     count=action.get('extra_dice_count',0);sides=action.get('extra_dice_sides',0)
     values=[]
@@ -1675,7 +1700,7 @@ def preview_action(data, source_token, action, token, critical=False, manual_amo
     return dict(hp_min=0 if dodge or miss else values[0][0],hp_max=values[1][0],shield=values[0][1],dodge=dodge,miss=miss)
 
 
-def perform_action(data, source_token, action_id, victims, critical=False, reaction=False, manual_amount=None, simulation=False):
+def perform_action(data, source_token, action_id, victims, critical=False, reaction=False, manual_amount=None, simulation=False, destination=None, area_center=None):
     if critical:raise ValueError("Крит определяется автоматически, назначать его вручную нельзя")
     # Execute on a copy so a missing target or invalid rule cannot partly spend resources.
     candidate = deepcopy(data)
@@ -1688,17 +1713,22 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
     if action['charges_max'] and action['charges_left']==0: raise ValueError('Закончились заряды')
     if action['mana_cost']>source.get('mana_current',0): raise ValueError('Не хватает маны')
     rule=action.get('rule','')
-    moving=rule in ('move_close','move_far')
+    moving=rule in ('move_close','move_far','move_point')
     check_action_limit(candidate, source_token, reaction or moving)
     if moving and source.get('movement_used') and candidate['combat_active']:raise ValueError('Перемещение этого хода уже использовано')
     if rule=='eye' and (not candidate['combat_active'] or source.get('eye_used')):raise ValueError('Десница Ока доступна один раз в текущем бою')
     if source[hp_fields(source)[0]] <= 0: raise ValueError('У действующего персонажа 0 HP')
     if not victims or len(victims) != len(set(victims)): raise ValueError('Выбери разные цели')
-    if len(victims) > 20: raise ValueError('Слишком много целей')
+    if len(victims) > 20 and not (candidate.get('distance_mode')=='meters' and action.get('area_radius_m',0)): raise ValueError('Слишком много целей')
     targets = [(token, participant(candidate, token)) for token in victims]
-    for token,_ in targets:check_reach(candidate,source_token,action,token)
+    if action.get('area_radius_m',0) and candidate.get('distance_mode')=='meters':
+        center=check_point_range(candidate,source_token,action,area_center)
+        if set(victims)!=set(area_targets(candidate,center,action['area_radius_m'])):raise ValueError('Цели в области изменились; выбери область заново')
+    else:
+        for token,_ in targets:check_reach(candidate,source_token,action,token)
     if rule in ('eye','stance') and (len(targets)!=1 or targets[0][0]!=source_token):raise ValueError('Эта способность применяется только к себе')
-    if moving and (len(targets)!=1 or targets[0][0]==source_token):raise ValueError('Выбери другого участника для перемещения')
+    if moving and (len(targets)!=1 or (targets[0][0]==source_token and rule!='move_point')):raise ValueError('Выбери другого участника для перемещения')
+    area_mode=candidate.get('distance_mode')=='meters' and bool(action.get('area_radius_m',0))
     amount = action_amount(source, action, critical)
     if manual_amount is not None:
         nonnegative_int(manual_amount, 'Ручная величина')
@@ -1725,7 +1755,7 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
                 messages.append(f"{target['name']}: промах — невидимость")
                 continue
             for hit in range(action['hits']):
-                if target[hp_fields(target)[0]] <= 0 or source[hp_fields(source)[0]]<=0: break
+                if target[hp_fields(target)[0]] <= 0 or (source[hp_fields(source)[0]]<=0 and not area_mode): break
                 if not simulation and ranged_miss_chance(candidate,source_token,action,token) and random.random()<.5:
                     messages.append(f'Попадание {hit+1}: промах — дальняя атака в ближнем бою (50%)');continue
                 if not simulation and action['damage_type']=='Физический' and random.random()<evasion_chance(target):
@@ -1747,7 +1777,10 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
             messages.append(f"{target['name']}: щит {amount}")
         else:
             if moving:
-                if rule=='move_far':
+                if candidate.get('distance_mode')=='meters':
+                    walked=move(candidate,source_token,token,rule,destination)
+                    messages.append(f"{source['name']}: перемещение {walked:g} м")
+                elif rule=='move_far':
                     for other,_ in participants(candidate):
                         if other!=source_token:
                             candidate.setdefault('distances',{})['|'.join(sorted((source_token,other)))]= 'Дальняя'
@@ -1819,10 +1852,11 @@ def resolve_player_request(data,request_id,accept):
     if not request or request['status']!='pending': raise ValueError('Предложение уже обработано')
     if not accept:
         request.update(status='rejected',message='Ведущий отклонил действие');return ['Предложение игрока отклонено']
+    if request.get('map_revision',data.get('map_revision',0))!=data.get('map_revision',0):raise ValueError('Карта изменилась; предложи действие заново')
     if request['turn_serial']!=data['turn_serial']: raise ValueError('Предложение относится к прошедшему ходу')
     action=next((a for a in data['ally']['actions'] if a['id']==request['action_id']),None)
     if data['combat_active'] and actor_token(get_current_actor(data))!='ally' and not (action or {}).get('reaction'): raise ValueError('Сейчас ход другого участника')
-    messages=perform_action(data,'ally',request['action_id'],request['victims'],False,reaction=False)
+    messages=perform_action(data,'ally',request['action_id'],request['victims'],False,reaction=False,destination=request.get('destination'),area_center=request.get('area_center'))
     request=next(r for r in data['player_requests'] if r['id']==request_id)
     request.update(status='accepted',message='Действие применено')
     return messages
