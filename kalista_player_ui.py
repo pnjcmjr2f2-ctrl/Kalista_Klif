@@ -1,5 +1,6 @@
 """Full character UI for the ally, shared by the player and GM."""
 from pathlib import Path
+from kalista_shape_ui import edit_shape
 from copy import deepcopy
 from uuid import uuid4
 from html import escape
@@ -289,6 +290,7 @@ def action_form(root,action,expected):
             reach=st.selectbox('Дальность атаки',['Ближняя','Дальняя','Любая'],index=['Ближняя','Дальняя','Любая'].index(x.get('reach','Ближняя')),format_func=lambda v:e.reach_label({'reach':v}),key=prefix+'_reach')
             range_m=st.number_input('Дальность в метрах (0 — не задана)',min_value=0.,value=float(x.get('range_m') or 0),key=prefix+'_range_m') or None
             radius=st.number_input('Радиус массовой атаки (м; 0 — без области)',min_value=0.,value=float(x.get('area_radius_m',0)),key=prefix+'_radius')
+            shape_settings=edit_shape(x,prefix+'_area')
             mana=st.number_input('Стоимость маны',min_value=0,value=x['mana_cost'],key=prefix+'_mana');cooldown=st.number_input('Перезарядка (личные ходы)',min_value=0,value=x['cooldown'],key=prefix+'_cd')
             hits=st.number_input('Попаданий',min_value=1,max_value=10,value=x['hits'],key=prefix+'_hits')
         with editor_tabs[1]:
@@ -305,7 +307,7 @@ def action_form(root,action,expected):
         with editor_tabs[3]:
             desc=st.text_area('Правила и описание',x['description'],key=prefix+'_desc');ready=st.checkbox('Правила и числа согласованы с ведущим',not x['needs_setup'],key=prefix+'_ready')
         if st.form_submit_button('Сохранить способность'):
-            new=deepcopy(x);new.update(name=name,kind=kind,amount=amount,shared_attack=shared,damage_type=dtype,reach=reach,mana_cost=mana,cooldown=cooldown,hits=hits,effect_kind=effect,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,charges_max=charges,charges_left=left,armor_penetration=penetration,extra_dice_count=dice,extra_dice_sides=sides,reaction=reaction,manual_recharge=manual,description=desc,needs_setup=not ready,range_m=range_m,area_radius_m=radius)
+            new=deepcopy(x);new.update(name=name,kind=kind,amount=amount,shared_attack=shared,damage_type=dtype,reach=reach,mana_cost=mana,cooldown=cooldown,hits=hits,effect_kind=effect,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,charges_max=charges,charges_left=left,armor_penetration=penetration,extra_dice_count=dice,extra_dice_sides=sides,reaction=reaction,manual_recharge=manual,description=desc,needs_setup=not ready,range_m=range_m,area_radius_m=radius,**shape_settings)
             values=[new if old['id']==x['id'] else old for old in expected] if action else expected+[new]
             commit(root,'actions',values,expected)
     if action and st.button('Удалить способность',key=prefix+'_delete'):commit(root,'actions',[old for old in expected if old['id']!=x['id']],expected)

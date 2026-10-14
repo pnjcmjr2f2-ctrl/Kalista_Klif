@@ -32,6 +32,8 @@ def ability_range(ability):
 
 def validate_ability(ability):
     ability_range(ability)
+    from kalista_shapes import validate_shape
+    validate_shape(ability)
     radius=ability.get('area_radius_m',0)
     if isinstance(radius,bool) or not isinstance(radius,(int,float)) or not math.isfinite(radius) or not 0<=radius<=100000:raise ValueError('Неверный радиус области')
     if radius and ability.get('action',ability.get('kind','damage'))!='damage':raise ValueError('Массовая область пока доступна только для урона')

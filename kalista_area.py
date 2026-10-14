@@ -1,6 +1,7 @@
-"""Atomic circular spell cast: one cost, independent hit and effect rolls per target."""
+"""Atomic area spell cast: one cost, independent hit and effect rolls per target."""
 from copy import deepcopy
-from kalista_map import check_point_range,area_targets,validate_ability
+from kalista_map import validate_ability
+from kalista_shapes import is_area,check_area_aim,shape_targets,area_label
 
 def cast_area_spell(data,spell,center,final_damage=None):
     import kalista_engine as e
@@ -9,14 +10,14 @@ def cast_area_spell(data,spell,center,final_damage=None):
     spell=next((s for s in candidate['spells'] if s['id']==spell['id']),None)
     if not spell:raise ValueError('Заклинание изменилось')
     validate_ability(spell)
-    if e.spell_action(spell)!='damage' or not spell.get('area_radius_m'):raise ValueError('Заклинание не является массовой атакой')
+    if e.spell_action(spell)!='damage' or not is_area(spell):raise ValueError('Заклинание не является массовой атакой')
     e.check_action_limit(candidate,'player')
     if candidate['hp_current']<=0:raise ValueError('У Калисты 0 HP')
     if candidate['mana_current']<spell['mana']:raise ValueError('Не хватает маны')
     if spell.get('cd_left'):raise ValueError('Заклинание ещё на перезарядке')
     if final_damage is not None:e.nonnegative_int(final_damage,'Итоговый урон')
-    center=check_point_range(candidate,'player',spell,center)
-    tokens=area_targets(candidate,center,spell['area_radius_m'])
+    center=check_area_aim(candidate,'player',spell,center)
+    tokens=shape_targets(candidate,'player',spell,center)
     if not tokens:raise ValueError('В области нет живых целей')
     dual,soul=e.spell_bonuses(candidate,spell);raw=e.spell_raw(spell['base'],candidate.get('spell_power',0),dual,soul)
     empowered=bool(candidate.get('pepel_empower') and 'Огонь' in spell['school'] and raw>0 and spell['name']!='Теневой укол')
@@ -25,7 +26,7 @@ def cast_area_spell(data,spell,center,final_damage=None):
     if spell.get('gives') in ('pepel','both'):candidate['pepel']=min(5,candidate['pepel']+1)
     if spell.get('gives') in ('ten','both'):candidate['ten']=min(5,candidate['ten']+1)
     if soul:candidate['soul_flame_boost']=False
-    messages=[f"«{spell['name']}» · область ({center[0]:g}; {center[1]:g}), радиус {spell['area_radius_m']:g} м · −{spell['mana']} MP"]
+    messages=[f"«{spell['name']}» · {area_label(spell)} · целей: {len(tokens)} · −{spell['mana']} MP"]
     counters=[]
     for token in tokens:
         target=e.participant(candidate,token)

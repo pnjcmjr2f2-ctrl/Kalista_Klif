@@ -30,8 +30,8 @@ function fit(locationOnly=false){
  width=canvas.clientWidth;
  let ps=locationOnly?bounds():(args.actors||[]).length?(args.actors||[]).map(a=>a.position):bounds();
  if(!ps.length)ps=[[0,0]];
- const region=args.mode==='area'?args.center:(args.actors||[]).find(a=>a.id===args.source)?.position;
- const radius=args.mode==='area'?args.radius:30;
+ const region=args.mode==='area'&&args.shape!=='cone'?args.center:(args.actors||[]).find(a=>a.id===args.source)?.position;
+ const radius=args.mode==='area'?(args.shape==='cone'?args.cone_length:args.radius):30;
  if(!locationOnly&&region&&radius)ps.push([region[0]-radius,region[1]-radius],[region[0]+radius,region[1]+radius]);
  const xs=ps.map(p=>p[0]),ys=ps.map(p=>p[1]);
  const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
@@ -40,6 +40,20 @@ function fit(locationOnly=false){
 }
 function ring(p,r,color,fill){const s=screen(p);ctx.beginPath();ctx.arc(...s,r*scale,0,Math.PI*2);ctx.fillStyle=fill;ctx.fill();ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.stroke()}
 function ruler(first,second,label){const a=screen(first),b=screen(second);ctx.strokeStyle='#dcc0f3';ctx.lineWidth=2;ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#fff';ctx.fillText(label,(a[0]+b[0])/2+4,(a[1]+b[1])/2-7)}
+function coneHit(actor,aim,target){
+ if(!actor||!aim||target.id===actor.id)return false;
+ const dx=aim[0]-actor.position[0],dy=aim[1]-actor.position[1],direction=Math.hypot(dx,dy);
+ if(direction<=1e-9)return false;
+ const x=target.position[0]-actor.position[0],y=target.position[1]-actor.position[1],distance=Math.hypot(x,y);
+ return distance<=args.cone_length+1e-9&&(distance<=1e-9||(x*dx+y*dy)/(distance*direction)>=Math.cos(args.cone_angle*Math.PI/360)-1e-12);
+}
+function cone(actor,aim){
+ if(!actor||!aim)return;
+ const dx=aim[0]-actor.position[0],dy=aim[1]-actor.position[1];
+ if(Math.hypot(dx,dy)<=1e-9)return;
+ const origin=screen(actor.position),angle=-Math.atan2(dy,dx),half=args.cone_angle*Math.PI/360,radius=args.cone_length*scale;
+ ctx.beginPath();ctx.moveTo(...origin);ctx.lineTo(origin[0]+Math.cos(angle-half)*radius,origin[1]+Math.sin(angle-half)*radius);ctx.arc(...origin,radius,angle-half,angle+half);ctx.closePath();ctx.fillStyle='#ff8f0033';ctx.fill();ctx.strokeStyle='#ffb45e';ctx.lineWidth=1.5;ctx.stroke();
+}
 function draw(){
  width=canvas.clientWidth;const d=devicePixelRatio||1;canvas.width=width*d;canvas.height=400*d;ctx.setTransform(d,0,0,d,0,0);
  ctx.fillStyle='#211a28';ctx.fillRect(0,0,width,400);ctx.font='13px system-ui';
@@ -58,16 +72,17 @@ function draw(){
  const actor=(args.actors||[]).find(a=>a.id===args.source),dest=chosen||args.center;
  if(actor&&args.mode==='target'&&Number.isFinite(args.range_m))ring(actor.position,args.range_m,'#bfa2da','#bfa2da0c');
  if(actor&&args.mode==='move')ring(actor.position,30,'#91c5a6','#91c5a60c');
- if(dest&&args.radius)ring(dest,args.radius,'#ffb45e','#ff8f0033');
+ if(args.mode==='area'&&args.shape==='cone')cone(actor,dest);
+ else if(dest&&args.radius)ring(dest,args.radius,'#ffb45e','#ff8f0033');
  if(dest&&actor){
-  const dist=Math.hypot(dest[0]-actor.position[0],dest[1]-actor.position[1]);ruler(actor.position,dest,dist.toFixed(1)+' м');
-  const b=screen(dest);ctx.beginPath();ctx.arc(...b,5,0,Math.PI*2);ctx.fill();
-  hint.textContent=(args.mode==='area'?'Центр области':'Перемещение')+': '+dist.toFixed(1)+' м'+(args.mode==='move'&&dist>30?' · больше 30 м':'');
+  const dist=Math.hypot(dest[0]-actor.position[0],dest[1]-actor.position[1]);const conical=args.mode==='area'&&args.shape==='cone';const endpoint=conical&&dist>1e-9?actor.position.map((v,i)=>v+(dest[i]-v)*args.cone_length/dist):dest;ruler(actor.position,endpoint,(conical?args.cone_length:dist).toFixed(1)+' м');
+  const b=screen(endpoint);ctx.beginPath();ctx.arc(...b,5,0,Math.PI*2);ctx.fill();
+  hint.textContent=conical?'Направление конуса · '+args.cone_length+' м · '+args.cone_angle+'°'+(dist<=1e-9?' · укажи направление':''):(args.mode==='area'?'Центр области':'Перемещение')+': '+dist.toFixed(1)+' м'+(args.mode==='move'&&dist>30?' · больше 30 м':'');
  }else hint.textContent=pan?'Потяни поле для просмотра':args.mode==='target'?'Коснись фигурки цели. Подсвеченный круг — дальность способности.':'Потяни свою фигурку или коснись нужной точки';
  (args.actors||[]).forEach((a,index)=>{
   const s=screen(a.id===args.source&&dest&&['move','setup'].includes(args.mode)?dest:a.position);
-  const selected=a.id===args.target;
-  const hit=dest&&args.radius&&Math.hypot(a.position[0]-dest[0],a.position[1]-dest[1])<=args.radius;
+  const selected=args.mode==='target'&&a.id===args.target;
+  const hit=args.mode==='area'&&args.shape==='cone'?coneHit(actor,dest,a):dest&&args.radius&&Math.hypot(a.position[0]-dest[0],a.position[1]-dest[1])<=args.radius;
   const tokenRadius=Math.max(12,Math.min(18,scale*3));ctx.beginPath();ctx.arc(...s,tokenRadius,0,Math.PI*2);ctx.fillStyle=a.enemy?'#d66c7f':'#91c5a6';ctx.fill();ctx.strokeStyle=hit||selected?'#ffb45e':a.id===args.source?'#dcc0f3':'#4c3e55';ctx.lineWidth=hit||selected||a.id===args.source?3:1;ctx.stroke();ctx.fillStyle='#1b1520';ctx.textAlign='center';const portrait=portraits[a.id];if(portrait?.complete&&portrait.naturalWidth){ctx.save();ctx.beginPath();ctx.arc(...s,tokenRadius-2,0,Math.PI*2);ctx.clip();const side=Math.min(portrait.naturalWidth,portrait.naturalHeight);ctx.drawImage(portrait,(portrait.naturalWidth-side)/2,0,side,side,s[0]-tokenRadius+2,s[1]-tokenRadius+2,2*tokenRadius-4,2*tokenRadius-4);ctx.restore()}else ctx.fillText(a.id==='ally'?'Ш':String(index+1),s[0],s[1]+5);ctx.textAlign='left';ctx.fillStyle='#17121d';ctx.fillRect(s[0]-18,s[1]+23,36,5);ctx.fillStyle='#91c5a6';ctx.fillRect(s[0]-18,s[1]+23,36*Math.max(0,Math.min(1,a.hp/Math.max(1,a.hp_max))),5);if(a.active){ctx.fillStyle='#ddc4ee';ctx.fillText('▶',s[0]-29,s[1]+4)}if(a.effects?.length){ctx.fillStyle='#ffb45e';ctx.fillText('◆',s[0]+20,s[1]-12)}
  });
  ctx.fillStyle='#17121dcc';ctx.fillRect(5,354,Math.min(width-10,10*scale+16),40);ctx.fillStyle='#e9d7f7';ctx.fillRect(12,382,10*scale,2);ctx.fillText('10 м',12,374);

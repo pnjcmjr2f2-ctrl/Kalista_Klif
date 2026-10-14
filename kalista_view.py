@@ -19,7 +19,8 @@ def show_book(actions,spells=False):
             mana=a.get('mana',a.get('mana_cost',0));cd=a.get('cd_left',a.get('cooldown_left',0));maximum=a.get('cd_max',a.get('cooldown',0))
             st.caption(f'Мана {mana} · Перезарядка {cd}/{maximum}')
             if a.get('range_m') is not None:st.caption(f"Дальность {a['range_m']:g} м")
-            if a.get('area_radius_m',0):st.caption(f"Массовая атака · радиус {a['area_radius_m']:g} м · задевает всех в области")
+            if a.get('area_shape')=='cone':st.caption(f"Конус · длина {a['cone_length_m']:g} м · угол {a['cone_angle_deg']:g}° · от атакующего")
+            elif a.get('area_radius_m',0):st.caption(f"Массовая атака · радиус {a['area_radius_m']:g} м · задевает всех в области")
             if a.get('kind','damage')=='damage':st.caption('Попаданий: '+str(a.get('hits',1)))
     st.caption('Применение — на странице «Бой». Настройка — в режиме редактирования.')
 

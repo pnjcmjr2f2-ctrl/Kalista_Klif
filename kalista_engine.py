@@ -10,6 +10,7 @@ from kalista_progression import xp_needed,initialize_progress,MAX_LEVEL,advance_
 from kalista_rewards import begin_rewards,register_enemy,settle_rewards
 from kalista_rarity import ensure_rarities,RARITIES,rarity_label,rarity_badge
 from kalista_growth import ensure_growth,effective_item,bind_registry
+from kalista_shapes import is_area,check_area_aim,shape_targets
 from kalista_map import ensure_positions,separation,ability_range,validate_ability,check_point_range,area_targets,move,point
 
 ELEMENTS = ["Огонь", "Земля", "Вода", "Воздух", "Тьма", "Свет"]
@@ -243,7 +244,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -343,7 +344,11 @@ def migrate(saved):
         spell.setdefault("cd_max", 0)
         spell.setdefault("cd_left", 0)
         spell.setdefault("dot", None)
+        spell.setdefault("effect_duration",0)
         spell.setdefault("reach", "Дальняя")
+        spell.setdefault("area_shape","circle")
+        spell.setdefault("cone_length_m",0.)
+        spell.setdefault("cone_angle_deg",60.)
         spell.setdefault("area_radius_m",0)
         spell.setdefault("range_m",None)
         if spell["range_m"]==0:spell["range_m"]=None
@@ -485,7 +490,7 @@ def migrate(saved):
         if isinstance(item["spell_power"],bool) or not isinstance(item["spell_power"],(int,float)) or not math.isfinite(item["spell_power"]):raise ValueError("Неверная сила заклинаний предмета")
     ensure_rarities(data)
     bind_registry(data)
-    data["schema_version"] = 26
+    data["schema_version"] = 27
     return data
 
 
@@ -935,7 +940,7 @@ def spell_damage_apply(data,spell,target,raw,final_damage=None):
 
 
 def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount=None):
-    if data.get('distance_mode')=='meters' and spell.get('area_radius_m',0):raise ValueError('Выбери точку массовой атаки на карте')
+    if data.get('distance_mode')=='meters' and is_area(spell):raise ValueError('Выбери точку массовой атаки на карте')
     if crit:raise ValueError("Крит определяется автоматически, назначать его вручную нельзя")
     """Проверяем всё до расходования ресурсов. Решения о целях/крите принимает UI."""
     check_action_limit(data, "player")
@@ -1634,6 +1639,9 @@ def validate_action_state(data):
             for field in ('armor_penetration','extra_dice_count','extra_dice_sides'): action.setdefault(field,0)
             action.setdefault('reach','Ближняя' if action['damage_type']=='Физический' else 'Дальняя')
             if action.get('rule')=='move_far':action['description']='Отойти от выбранной цели на 30 м.' if data.get('distance_mode')=='meters' else 'Отойти от всех участников рядом. Одно перемещение за ход, без расхода действий.'
+            action.setdefault('area_shape','circle')
+            action.setdefault('cone_length_m',0.)
+            action.setdefault('cone_angle_deg',60.)
             action.setdefault('area_radius_m',0)
             action.setdefault('range_m',None)
             if action['range_m']==0:action['range_m']=None
@@ -1697,7 +1705,7 @@ def action_damage_factor(target, action):
 def preview_action(data, source_token, action, token, critical=False, manual_amount=None,area_center=None):
     target=participant(data,token)
     amount=action_amount(participant(data,source_token),action,critical) if manual_amount is None else manual_amount
-    if area_center is not None:check_point_range(data,source_token,action,area_center)
+    if area_center is not None:check_area_aim(data,source_token,action,area_center)
     else:check_reach(data,source_token,action,token)
     amount=round(amount*action.get('multiplier',1))
     count=action.get('extra_dice_count',0);sides=action.get('extra_dice_sides',0)
@@ -1733,16 +1741,16 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
     if rule=='eye' and (not candidate['combat_active'] or source.get('eye_used')):raise ValueError('Десница Ока доступна один раз в текущем бою')
     if source[hp_fields(source)[0]] <= 0: raise ValueError('У действующего персонажа 0 HP')
     if not victims or len(victims) != len(set(victims)): raise ValueError('Выбери разные цели')
-    if len(victims) > 20 and not (candidate.get('distance_mode')=='meters' and action.get('area_radius_m',0)): raise ValueError('Слишком много целей')
+    if len(victims) > 20 and not (candidate.get('distance_mode')=='meters' and is_area(action)): raise ValueError('Слишком много целей')
     targets = [(token, participant(candidate, token)) for token in victims]
-    if action.get('area_radius_m',0) and candidate.get('distance_mode')=='meters':
-        center=check_point_range(candidate,source_token,action,area_center)
-        if set(victims)!=set(area_targets(candidate,center,action['area_radius_m'])):raise ValueError('Цели в области изменились; выбери область заново')
+    if is_area(action) and candidate.get('distance_mode')=='meters':
+        center=check_area_aim(candidate,source_token,action,area_center)
+        if set(victims)!=set(shape_targets(candidate,source_token,action,center)):raise ValueError('Цели в области изменились; выбери область заново')
     else:
         for token,_ in targets:check_reach(candidate,source_token,action,token)
     if rule in ('eye','stance') and (len(targets)!=1 or targets[0][0]!=source_token):raise ValueError('Эта способность применяется только к себе')
     if moving and (len(targets)!=1 or (targets[0][0]==source_token and rule!='move_point')):raise ValueError('Выбери другого участника для перемещения')
-    area_mode=candidate.get('distance_mode')=='meters' and bool(action.get('area_radius_m',0))
+    area_mode=candidate.get('distance_mode')=='meters' and bool(is_area(action))
     amount = action_amount(source, action, critical)
     if manual_amount is not None:
         nonnegative_int(manual_amount, 'Ручная величина')

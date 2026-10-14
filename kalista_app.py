@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v41 · полный лист игрока
+Калиста Клиф — v42 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
 import streamlit as st
 from kalista_view import editing,gm_view
 from kalista_map import separation,ability_range,area_targets,check_point_range
+from kalista_shape_ui import edit_shape
+from kalista_shapes import is_area,check_area_aim,shape_targets,area_label
 from kalista_loot import settings as loot_settings,assign_loot,equip_root_reserve,DEFAULT_CHANCES,WEIGHTS
 import json
 import random
@@ -297,7 +299,7 @@ def render_selected_spell(data, target, selected_id=None):
     spell = spells[sid]
     action = spell_action(spell)
     target_token=next((t for t,v in participants(data) if v is target),None)
-    if data.get('distance_mode')=='meters' and spell.get('area_radius_m',0):
+    if data.get('distance_mode')=='meters' and is_area(spell):
         render_area_spell(data,spell,target);render_spell_extras(data);return
     dual, soul = spell_bonuses(data, spell)
     raw = spell_raw(spell["base"], data.get("spell_power", 0), dual, soul) if action == "damage" else spell.get("effect_value", 0)
@@ -739,7 +741,7 @@ def render_queue(data, token):
 def render_area_selection(data,source,ability,target,prefix):
     from kalista_map import area_targets,check_point_range,map_svg,ability_range,map_legend
     limit=ability_range(ability)
-    st.caption('Дальность: '+(f'{limit:g} м' if limit is not None else 'не задана')+f" · радиус: {ability['area_radius_m']:g} м")
+    st.caption(area_label(ability)+(' · от атакующего' if ability.get('area_shape')=='cone' else ' · дальность: '+(f'{limit:g} м' if limit is not None else 'не задана')))
     if st.session_state.get(prefix+'_anchor')!=target:
         st.session_state[prefix+'_x'],st.session_state[prefix+'_y']=data['positions'][target]
         st.session_state[prefix+'_anchor']=target
@@ -748,13 +750,15 @@ def render_area_selection(data,source,ability,target,prefix):
         center=st.session_state['_board_area']
     else:
         from kalista_interactive_map import tactical_map
-        center=tactical_map(data,source,prefix+'_canvas',center=[st.session_state[prefix+'_x'],st.session_state[prefix+'_y']],radius=ability['area_radius_m'],mode='area')
-    tokens=area_targets(data,center,ability['area_radius_m'])
+        center=tactical_map(data,source,prefix+'_canvas',center=[st.session_state[prefix+'_x'],st.session_state[prefix+'_y']],radius=ability.get('area_radius_m',0),mode='area',shape=ability.get('area_shape','circle'),cone_length=ability.get('cone_length_m',0),cone_angle=ability.get('cone_angle_deg',60))
+    tokens=[]
     if st.session_state.get('_board_area_context')!=context:st.caption('Коснись центра взрыва или потяни его по полю.')
     problem=''
-    try:check_point_range(data,source,ability,center)
+    try:
+        check_area_aim(data,source,ability,center)
+        tokens=shape_targets(data,source,ability,center)
     except ValueError as exc:problem=str(exc);st.warning(problem)
-    if not tokens:problem='В области нет живых целей';st.warning(problem)
+    if not tokens and not problem:problem='В области нет живых целей';st.warning(problem)
     friendly=[participant(data,t)['name'] for t in tokens if combat_side(data,t)!='Враг']
     if friendly:st.warning('Заденет героев и союзников: '+', '.join(friendly))
     st.caption('В области: '+(', '.join(participant(data,t)['name'] for t in tokens) or 'никого'))
@@ -877,8 +881,9 @@ def render_battle_workstation(data,source,target_key,player_mode=False):
     setup=bool(editing() and not player_mode and st.toggle('Расстановка ведущего',key='map_setup_'+source))
     selected=source
     if setup:selected=remembered_select('Фигурка для расстановки',tokens,'map_edit_actor',default=source,format_func=lambda t:participant_label(data,t))
-    area=bool(ability and ability.get('area_radius_m',0) and mode=='Атака' and not setup and data.get('distance_mode')=='meters')
-    center=data['positions'][target] if area else None
+    area=bool(ability and is_area(ability) and mode=='Атака' and not setup and data.get('distance_mode')=='meters')
+    center=list(data['positions'][target]) if area else None
+    if area and ability.get('area_shape')=='cone' and math.dist(data['positions'][source],center)<=1e-9:center=[center[0]+1,center[1]]
     st.session_state.pop('_board_area_context',None)
     with st.container(key='battle_workstation'):
         map_column,panel=st.columns([1.65,1],gap='medium')
@@ -886,12 +891,12 @@ def render_battle_workstation(data,source,target_key,player_mode=False):
             backdrop=background(data)
             if backdrop:st.caption('Локация: '+backdrop['name'])
             if data.get('distance_mode')=='meters':
-                destination=tactical_map(data,source,'shared_map_'+source,center=center,radius=ability['area_radius_m'] if area else 0,mode='setup' if setup else 'move' if mode=='Перемещение' else 'area' if area else 'target',selected=selected,target=target,target_key=target_key,range_m=ability_range(ability) if ability and mode=='Атака' else None)
+                destination=tactical_map(data,source,'shared_map_'+source,center=center,radius=ability.get('area_radius_m',0) if area else 0,shape=ability.get('area_shape','circle') if area else 'circle',cone_length=ability.get('cone_length_m',0) if area else 0,cone_angle=ability.get('cone_angle_deg',60) if area else 60,mode='setup' if setup else 'move' if mode=='Перемещение' else 'area' if area else 'target',selected=selected,target=target,target_key=target_key,range_m=ability_range(ability) if ability and mode=='Атака' else None)
                 target=st.session_state.get(target_key,target)
                 if area:
                     st.session_state['_board_area_context']=(source,ability['id'],data.get('map_revision',0),data.get('turn_serial',0))
                     st.session_state['_board_area']=destination
-                st.caption('Выбери фигурку цели.' if mode=='Атака' and not area and not setup else 'Коснись центра области — оранжевая обводка показывает цели.' if area else 'Потяни фигурку или коснись точки назначения. Затем подтверди справа или под картой.')
+                st.caption('Укажи направление конуса от атакующего.' if area and ability.get('area_shape')=='cone' else 'Выбери фигурку цели.' if mode=='Атака' and not area and not setup else 'Коснись центра области — оранжевая обводка показывает цели.' if area else 'Потяни фигурку или коснись точки назначения. Затем подтверди справа или под картой.')
             else:destination=data['positions'][source];st.info('Для поля в метрах включи актуальную карту.')
         with panel:
             with st.expander('Выбрать цель из списка'):
@@ -1201,7 +1206,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False, sel
     if target_key in st.session_state:
         st.session_state[target_key]=[t for t in st.session_state[target_key] if t in valid_tokens]
     area_center=None
-    if data.get('distance_mode')=='meters' and action.get('area_radius_m',0):
+    if data.get('distance_mode')=='meters' and is_area(action):
         area_center,victims,area_problem=render_area_selection(data,source_token,action,victim_token,'action_area_'+aid)
     else:
         with st.expander('Несколько целей / изменить цели'):
@@ -1251,7 +1256,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False, sel
     if data['combat_active'] and used>=2 and not reaction and not action.get('rule','').startswith('move_'):reasons.append('действия закончились')
     for token in victims:
         try:
-            if area_center is not None:check_point_range(data,source_token,action,area_center)
+            if area_center is not None:check_area_aim(data,source_token,action,area_center)
             else:check_reach(data,source_token,action,token)
         except ValueError as exc:reasons.append(str(exc));unavailable=True
     if area_center is not None and area_problem:reasons.append(area_problem);unavailable=True
@@ -1292,6 +1297,7 @@ def render_action_editor(data,token):
                 reach=st.selectbox('Дальность атаки',['Ближняя','Дальняя','Любая'],index=['Ближняя','Дальняя','Любая'].index(action.get('reach','Ближняя')))
                 range_m=st.number_input('Дальность в метрах (0 — не задана)',min_value=0.,value=float(action.get('range_m') or 0)) or None
                 radius=st.number_input('Радиус массовой атаки (м; 0 — без области)',min_value=0.,value=float(action.get('area_radius_m',0)))
+                shape_settings=edit_shape(action,'gm_shape_'+token+'_'+aid)
                 cooldown=st.number_input('Перезарядка: начала личного хода',min_value=0,value=action['cooldown'])
                 mana_cost=st.number_input('Стоимость маны (0 — без маны)',min_value=0,value=action['mana_cost'])
             with editor_tabs[1]:
@@ -1312,7 +1318,7 @@ def render_action_editor(data,token):
                 ready=st.checkbox('Боевые числа и правила этого действия подтверждены',not action['needs_setup'])
             if st.form_submit_button('Сохранить действие'):
                 candidate=deepcopy(data);item=next(a for a in participant(candidate,token)['actions'] if a['id']==aid)
-                item.update(name=name,kind=kind,amount=amount,shared_attack=shared,hits=hits,damage_type=dtype,cooldown=cooldown,manual_recharge=manual,effect_kind=effect_kind,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,description=desc,needs_setup=not ready,mana_cost=mana_cost,charges_max=charges,charges_left=charges if charges!=action['charges_max'] else action['charges_left'],armor_penetration=penetration,extra_dice_count=dice_count,extra_dice_sides=dice_sides,range_m=range_m,area_radius_m=radius)
+                item.update(name=name,kind=kind,amount=amount,shared_attack=shared,hits=hits,damage_type=dtype,cooldown=cooldown,manual_recharge=manual,effect_kind=effect_kind,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,description=desc,needs_setup=not ready,mana_cost=mana_cost,charges_max=charges,charges_left=charges if charges!=action['charges_max'] else action['charges_left'],armor_penetration=penetration,extra_dice_count=dice_count,extra_dice_sides=dice_sides,range_m=range_m,area_radius_m=radius,**shape_settings)
                 item['reaction']=reaction
                 item['reach']=reach
                 try:
@@ -1598,7 +1604,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 25:
+if data.get("schema_version", 5) < 27:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1904,6 +1910,7 @@ elif page=="Заклинания":
                 sp["reach"] = st.selectbox("Дальность способности",["Ближняя","Дальняя","Любая"],index=["Ближняя","Дальняя","Любая"].index(sp.get("reach","Дальняя")),format_func=lambda v:reach_label({"reach":v}),key=f"sr{sp['id']}")
                 sp["range_m"]=st.number_input("Дальность в метрах (0 — не задана)",min_value=0.,value=float(sp.get("range_m") or 0),key=f"srange{sp['id']}") or None
                 sp["area_radius_m"]=st.number_input("Радиус массовой атаки (м; 0 — без области)",min_value=0.,value=float(sp.get("area_radius_m",0)),key=f"sradius{sp['id']}")
+                sp.update(edit_shape(sp,"spell_shape_"+str(sp["id"]),standalone=True))
                 sp["desc"] = st.text_input("Описание", sp.get("desc",""), key=f"sd{sp['id']}")
                 actions = ["damage", "heal", "shield", "note"]
                 sp["action"] = st.selectbox("Действие", actions, index=actions.index(spell_action(sp)),
@@ -1937,6 +1944,7 @@ elif page=="Заклинания":
         sr = st.selectbox("Дальность способности",["Ближняя","Дальняя","Любая"],index=1,format_func=lambda v:reach_label({"reach":v}))
         range_m=st.number_input("Дальность в метрах (0 — не задана)",min_value=0.,value=0.) or None
         radius=st.number_input("Радиус массовой атаки (м; 0 — без области)",min_value=0.,value=0.)
+        shape_settings=edit_shape({},"new_spell_shape")
         sd = st.text_input("Описание")
         sg = st.selectbox("Даёт", [None, "pepel", "ten", "both"],
             format_func=lambda x: {None:"Ничего","pepel":"Пепел","ten":"Тень","both":"Оба"}[x])
@@ -1944,7 +1952,7 @@ elif page=="Заклинания":
             nid = max((s.get("id",0) for s in data["spells"]), default=0) + 1
             data["spells"].append({
                 "id": nid, "name": sn.strip(), "base": sb, "mana": sm,
-                "school": ss, "desc": sd, "gives": sg, "reach": sr,"range_m":range_m,"area_radius_m":radius,
+                "school": ss, "desc": sd, "gives": sg, "reach": sr,"range_m":range_m,"area_radius_m":radius,**shape_settings,
                 "cd_max": sc, "cd_left": 0, "dot": None, "range": "Средняя"
             })
             persist_and_rerun()
