@@ -11,7 +11,7 @@ def gm_app(*args,**kwargs):
 from streamlit.testing.v1 import AppTest
 
 def fresh():
- d=e.migrate(deepcopy(e.DEFAULT));d['ally']=e.imported_friend();e.recalc(d);return e.migrate(d)
+ d=e.migrate(deepcopy(e.DEFAULT));d['ally']=e.imported_friend();d['ally']['sheet_profile']['critical_chance']=0;e.recalc(d);return e.migrate(d)
 def enemy(id,hp=1500):
  return dict(id=id,name='Страж '+str(id),hp=hp,hp_max=hp,armor=185,resists={x:0 for x in e.ELEMENTS},initiative=5,effects=[],attack_damage=50,attack_type='Физический')
 

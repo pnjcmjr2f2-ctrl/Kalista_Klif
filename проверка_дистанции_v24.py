@@ -16,7 +16,7 @@ assert sum('промах' in m for m in messages)==2
 assert e.preview_action(d,'ally',attack,'enemy:1')['miss']==.5
 # Each hit is independent; dodge follows hit check.
 d['turn_actions']=[]
-with patch.object(e.random,'random',side_effect=[.1,.9,.9]):e.perform_action(d,'ally',attack['id'],['enemy:1'])
+with patch.object(e.random,'random',side_effect=[.1,.9,.9,.99]):e.perform_action(d,'ally',attack['id'],['enemy:1'])
 assert d['enemies'][0]['hp']==hp-302
 attack['reach']='Любая';assert e.ranged_miss_chance(d,'ally',attack,'enemy:1')==0
 move=next(x for x in a['actions'] if x.get('rule')=='move_far');d['turn_actions']=[]

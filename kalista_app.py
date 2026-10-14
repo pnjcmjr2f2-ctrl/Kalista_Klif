@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v30 · полный лист игрока
+Калиста Клиф — v31 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -310,7 +310,7 @@ def render_selected_spell(data, target):
     final_damage = 0
     if action == "damage":
         with st.expander("Крит и ручной урон" if editing() else "Критический удар", expanded=False):
-            crit_mode = remembered_select("Критический удар", ["Без крита", "Крит ведущего", "Бросок"], "battle_crit", default="Без крита")
+            st.caption("Крит определяется автоматически по формуле при попадании.")
             override = st.checkbox("Назначить итоговый урон вручную", key="battle_override") if editing() else False
             if editing():
                 final_damage = st.number_input("Готовый урон (щит будет учтён)", min_value=0, value=0,
@@ -321,10 +321,10 @@ def render_selected_spell(data, target):
             if spell.get('reach')=='Ближняя' and distance_between(data,'player',target_token)!='Ближняя':st.warning('Ближнее заклинание: сначала сблизься с целью.')
             if ranged_miss_chance(data,'player',spell,target_token):st.warning('Дальнее заклинание при враге рядом: 50% шанс промаха. При промахе урон и эффекты не накладываются.')
         dtype = "Огонь" if "Огонь" in spell["school"] else "Тьма"
-        preview_raw = round(raw * 1.5) if crit_mode == "Крит ведущего" else raw
+        preview_raw = raw
         if raw > 0:
             preview = spell_damage_preview(data,spell,target,preview_raw,final_damage if override else None)
-            st.info(damage_message(target["name"], preview) + (" · до броска крита" if crit_mode == "Бросок" and not override else ""))
+            st.info(damage_message(target["name"], preview) + (" · обычное попадание; крит рассчитывается автоматически" if not override else ""))
             if target is data['ally'] or target is data:
                 st.warning('Выбрана дружественная цель: заклинание нанесёт ей урон.')
         if 'Огонь' in spell['school']:st.caption(f"Горение: шанс 50% · {kalista_dot_damage(data,'burn')} Огнём × 3 хода цели; сила фиксируется при наложении")
@@ -352,7 +352,7 @@ def render_selected_spell(data, target):
     if blocked:st.caption('Недоступно: '+'; '.join(blocked))
     if st.button("Применить способность", key=f"cast_{sid}", disabled=not can, type="primary", use_container_width=True):
         chance = effective_crit_chance(data)
-        crit = action == "damage" and not override and (crit_mode == "Крит ведущего" or (crit_mode == "Бросок" and random.random() < chance))
+        crit = False
         try:
             for message in cast_spell(data, spell, target, crit=crit,
                                       final_damage=final_damage if override and action == "damage" else None,
@@ -991,7 +991,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
     if action['needs_setup']: st.warning('Для этого действия ведущему нужно задать боевые числа и подтвердить правила в редакторе действий.')
     critical=False
     if action['kind']=='damage' and action['shared_attack'] and source.get('sheet_profile'):
-        critical=st.checkbox('Критический удар',key=f'actor_critical_{source_token}')
+        st.caption(f"Автоматический крит: {source['sheet_profile']['critical_chance']:g}% · проверка отдельно для каждого попадания")
     amount=action_amount(source,action,critical)
     if critical: st.info(f'Критический урон: {amount} за попадание. Обычный урон сейчас не используется.')
     else: st.caption(f'Величина: {amount} · Попаданий: {action["hits"]} · Тип: {action["damage_type"]}')
@@ -1156,11 +1156,11 @@ def submit_player_action(data, aid, victims, critical):
     if action is None: raise ValueError('Действие изменилось; обнови экран')
     if latest['combat_active'] and actor_token(get_current_actor(latest))!='ally' and not action.get('reaction'): raise ValueError('Сейчас ход другого участника')
     # Validate by simulation; no game resources are consumed until the GM accepts.
-    perform_action(deepcopy(latest),'ally',aid,victims,critical,simulation=True)
+    perform_action(deepcopy(latest),'ally',aid,victims,False,simulation=True)
     pending=[r for r in latest.get('player_requests',[]) if r['status']=='pending']
     if pending: raise ValueError('Предыдущее предложение ещё ожидает решения ведущего')
     latest.setdefault('player_requests',[]).append(dict(id=uuid4().hex,action_id=aid,action_name=action['name'],victims=victims,
-                                                      critical=critical,turn_serial=latest['turn_serial'],status='pending',message='Ожидает ведущего'))
+                                                      critical=False,turn_serial=latest['turn_serial'],status='pending',message='Ожидает ведущего'))
     latest['player_requests']=latest['player_requests'][-30:]
     write_state(SAVE_FILE,latest,rev,migrate)
 

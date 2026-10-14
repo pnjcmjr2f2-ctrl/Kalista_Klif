@@ -902,6 +902,7 @@ def spell_damage_apply(data,spell,target,raw,final_damage=None):
 
 
 def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount=None):
+    if crit:raise ValueError("Крит определяется автоматически, назначать его вручную нельзя")
     """Проверяем всё до расходования ресурсов. Решения о целях/крите принимает UI."""
     check_action_limit(data, "player")
     if data['hp_current']<=0: raise ValueError('У Калисты 0 HP')
@@ -962,6 +963,9 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
             messages.append('Промах: дальнее заклинание в ближнем бою (шанс промаха 50%)')
             if empowered:data['pepel_empower']=False
         elif raw > 0:
+            if final_damage is None and random.random()<effective_crit_chance(data):
+                raw=round(raw*1.5)
+                messages.append('КРИТ: автоматический бросок по шансу Калисты · урон ×1,5')
             result=spell_damage_apply(data,spell,target,raw,final_damage)
             messages.append(damage_message(target['name'],result))
             target_token=next(t for t,v in participants(data) if v is target)
@@ -1649,6 +1653,7 @@ def preview_action(data, source_token, action, token, critical=False, manual_amo
 
 
 def perform_action(data, source_token, action_id, victims, critical=False, reaction=False, manual_amount=None, simulation=False):
+    if critical:raise ValueError("Крит определяется автоматически, назначать его вручную нельзя")
     # Execute on a copy so a missing target or invalid rule cannot partly spend resources.
     candidate = deepcopy(data)
     source = participant(candidate, source_token)
@@ -1678,9 +1683,11 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
         amount = manual_amount
     if action['kind'] != 'note' and amount <= 0: raise ValueError('Задай величину выше 0')
     messages=[]
+    extra_bonus=0
     if action.get('extra_dice_count'):
         rolls=[random.randint(1,action['extra_dice_sides']) for _ in range(action['extra_dice_count'])]
-        amount+=sum(rolls)
+        extra_bonus=sum(rolls)
+        amount+=extra_bonus
         messages.append(f"Дополнительный бросок: {rolls} = +{sum(rolls)}")
     if action['kind']=='damage':
         amount=round(amount*action.get('multiplier',1))
@@ -1701,7 +1708,13 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
                 if not simulation and action['damage_type']=='Физический' and random.random()<evasion_chance(target):
                     messages.append(f"Попадание {hit+1}: {target['name']} уклонился");continue
                 landed=True
-                result=apply_damage(target, amount, action['damage_type'],defense_factor=action_damage_factor(target,action))
+                hit_amount=amount
+                if not simulation and manual_amount is None and action['shared_attack'] and source.get('sheet_profile'):
+                    chance=min(.95,max(0,source['sheet_profile']['critical_chance']/100))
+                    if chance>0 and random.random()<chance:
+                        hit_amount=outgoing_damage(source,round((action_amount(source,action,True)+extra_bonus)*action.get('multiplier',1)),action['damage_type'])
+                        messages.append(f'Попадание {hit+1}: КРИТ — автоматический бросок {chance*100:g}%')
+                result=apply_damage(target, hit_amount, action['damage_type'],defense_factor=action_damage_factor(target,action))
                 messages.append(f"Попадание {hit+1}: " + damage_message(target['name'], result))
                 if not simulation and not reaction:messages.extend(counterattack(candidate,source_token,token,result))
         elif action['kind'] == 'heal':
@@ -1786,7 +1799,7 @@ def resolve_player_request(data,request_id,accept):
     if request['turn_serial']!=data['turn_serial']: raise ValueError('Предложение относится к прошедшему ходу')
     action=next((a for a in data['ally']['actions'] if a['id']==request['action_id']),None)
     if data['combat_active'] and actor_token(get_current_actor(data))!='ally' and not (action or {}).get('reaction'): raise ValueError('Сейчас ход другого участника')
-    messages=perform_action(data,'ally',request['action_id'],request['victims'],request['critical'],reaction=False)
+    messages=perform_action(data,'ally',request['action_id'],request['victims'],False,reaction=False)
     request=next(r for r in data['player_requests'] if r['id']==request_id)
     request.update(status='accepted',message='Действие применено')
     return messages
