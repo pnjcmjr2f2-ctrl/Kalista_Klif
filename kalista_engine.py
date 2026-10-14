@@ -5,10 +5,11 @@ import json
 from copy import deepcopy
 from uuid import uuid4
 from datetime import datetime
-from kalista_player_model import ensure_player_sheet
+from kalista_player_model import ensure_player_sheet,gear_totals
 from kalista_progression import xp_needed,initialize_progress,MAX_LEVEL,advance_levels
 from kalista_rewards import begin_rewards,register_enemy,settle_rewards
 from kalista_rarity import ensure_rarities,RARITIES,rarity_label,rarity_badge
+from kalista_growth import ensure_growth,effective_item,bind_registry
 
 ELEMENTS = ["Огонь", "Земля", "Вода", "Воздух", "Тьма", "Свет"]
 
@@ -132,11 +133,15 @@ def recalc_equip(d):
     eq = d.get("equipment", {})
     b = {k:0 for k in ["Сила","Выносливость","Ловкость","Мудрость","Интеллект","Харизма","Дух"]}
     arm = atk = 0
+    item_power=0
     resists = {e:0 for e in ELEMENTS}
-    for it in eq.values():
+    for original in eq.values():
+        ensure_growth(original,"player",d["level"],True)
+        it=effective_item(original,True,d["level"])
         b["Интеллект"] += it.get("int",0)
         b["Мудрость"] += it.get("wis",0)
         b["Дух"] += it.get("spi",0)
+        item_power+=it.get("spell_power",0)
         arm += it.get("armor",0)
         atk += it.get("attack",0)
         resists["Огонь"] += it.get("fire",0)
@@ -148,6 +153,7 @@ def recalc_equip(d):
     b["Выносливость"] = 25
     for key, value in d.get("stat_adjustments", {}).items():
         b[key] = b.get(key, 0) + value
+    d["equip_spell_power"] = item_power
     d["equip_bonuses"] = b
     d["armor"] = max(0, arm + d.get("armor_adjustment", 0))
     d["phys_attack"] = max(0, 5 + atk + d.get("attack_adjustment", 0))
@@ -159,11 +165,12 @@ def recalc_equip(d):
 def recalc(d):
     if d.get("xp_curve_version")==1:advance_levels(d)
     if "equipment" in d: recalc_equip(d)
+    for item in d.get("equipment_reserve",[]):ensure_growth(item,"player",d["level"],True)
     intel=total_stat(d,"Интеллект"); wis=total_stat(d,"Мудрость"); cha=total_stat(d,"Харизма")
     spi=total_stat(d,"Дух"); end=total_stat(d,"Выносливость"); agi=total_stat(d,"Ловкость")
     d["mana_max"]=intel*10
     d["hp_max"]=d["level"]*20 + end*10
-    d["spell_power"]=intel/5/100
+    d["spell_power"]=max(0,(intel/5+d.get("equip_spell_power",0))/100)
     d["mana_regen"]=round(spi*0.5)
     d["initiative"]=round(agi/2 + wis/4)
     d["control_resist"]=min(0.9, wis/4/100)
@@ -232,7 +239,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -276,8 +283,13 @@ def migrate(saved):
             if any(not isinstance(v, (int,float)) or isinstance(v,bool) or not math.isfinite(v) or not -100 <= v <= 95 for v in target['resists'].values()):
                 raise ValueError('Сопротивления в процентах должны быть от −100 до 95')
         if 'sheet_profile' in target:
+            p=target['sheet_profile']
+            if p.get('formula_adjustments') and any(x.get('growth',{}).get('last_level',p['level'])!=p['level'] for x in p['equipment']):
+                from kalista_player_model import recalc_player
+                recalc_player(target)
             ensure_player_sheet(target)
             profile = target['sheet_profile']
+            target['spell_power']=max(0,(profile['stats']['Интеллект']/5+gear_totals(profile)['Сила заклинаний'])/100)
             template = imported_friend()['sheet_profile']
             validate_tree(profile, {key:value for key,value in template.items() if key not in ('equipment','inventory','formula_adjustments','stat_adjustments','resist_adjustments','quests')})
             if not template.keys() <= profile.keys(): raise ValueError('Неполный лист персонажа друга')
@@ -453,8 +465,12 @@ def migrate(saved):
         spell['desc']=spell.get('desc','').replace('18 урона','6% Интеллекта × (1 + сила заклинаний)').replace('10 урона','4% Интеллекта × (1 + сила заклинаний)')
     initialize_progress(data)
     if data["ally"].get("sheet_profile"):initialize_progress(data["ally"]["sheet_profile"])
+    for item in list(data["equipment"].values())+data.get("equipment_reserve",[]):
+        item.setdefault("spell_power",0)
+        if isinstance(item["spell_power"],bool) or not isinstance(item["spell_power"],(int,float)) or not math.isfinite(item["spell_power"]):raise ValueError("Неверная сила заклинаний предмета")
     ensure_rarities(data)
-    data["schema_version"] = 23
+    bind_registry(data)
+    data["schema_version"] = 24
     return data
 
 
@@ -1611,7 +1627,9 @@ def action_amount(source, action, critical=False):
         return round(source['sheet_profile']['critical_damage'])
     if action['shared_attack']:
         return round(source['sheet_profile']['attack']) if source.get('sheet_profile') else source.get('attack_damage',0)
-    return action['amount']
+    amount=action['amount']
+    if action['kind']=='damage' and action['damage_type']!='Физический':amount=round(amount*(1+source.get('spell_power',0)))
+    return amount
 
 
 def check_action_limit(data, source_token, reaction=False):
@@ -1807,4 +1825,4 @@ def resolve_player_request(data,request_id,accept):
     return messages
 
 
-__all__ = ['RARITIES','rarity_label','rarity_badge','register_enemy','xp_needed','MAX_LEVEL','visible_battle_participants','reach_label','ranged_miss_chance','kalista_dot_damage','distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']
+__all__ = ['effective_item','RARITIES','rarity_label','rarity_badge','register_enemy','xp_needed','MAX_LEVEL','visible_battle_participants','reach_label','ranged_miss_chance','kalista_dot_damage','distance_between','evasion_chance','check_reach','warrior_actions','movement_actions','fill_warrior_equipment','shadow_shield_amount', 'outgoing_damage', 'roll_spell_effects', 'spell_damage_preview', 'spell_damage_apply', 'invalidate_player_requests', 'set_manual_turn', 'preview_action', 'action_damage_factor', 'ELEMENTS', 'DEFAULT', 'absorb', 'real_dmg', 'total_stat', 'recalc_equip', 'recalc', 'gen_enemy', 'merge_defaults', 'validate_tree', 'migrate', 'spell_raw', 'EFFECT_KINDS', 'DAMAGE_TYPES', 'nonnegative_int', 'hp_fields', 'participant', 'participants', 'participant_label', 'validate_effect', 'add_effect', 'effective_defense', 'damage_preview', 'apply_damage', 'apply_healing', 'restore_mana', 'observe_mana_reserve', 'tick_mana_regeneration', 'damage_message', 'tick_periodic', 'tick_round_effects', 'actor_target', 'activate_shadow_invisibility', 'activate_shadow_resistance', 'begin_actor_turn', 'finish_round', 'advance_turn', 'spell_action', 'cast_spell', 'build_turn_order', 'refresh_turn_order', 'get_current_actor', 'validate_item_use', 'use_item', 'actor_token', 'set_initiative', 'move_in_queue', 'exclude_from_queue', 'return_to_queue', 'add_history', 'special_availability', 'activate_special', 'effective_crit_chance', 'start_combat', 'end_combat', 'spell_bonuses', 'exclude_from_queue_after_delete', 'combatant_heal', 'SHEOGARATH_REFERENCE', 'imported_friend', 'scene_record', 'npc_record', 'validate_campaign', 'create_scene', 'create_npc', 'activate_scene', 'update_scene', 'update_npc', 'delete_scene', 'delete_npc', 'npc_battle_token', 'add_npc_to_battle', 'scene_player_text', 'combat_side', 'default_opponent', 'action_template', 'friend_actions', 'validate_action_state', 'action_amount', 'check_action_limit', 'record_turn_action', 'perform_action', 'effect_lifetime', 'public_player_state', 'resolve_player_request']

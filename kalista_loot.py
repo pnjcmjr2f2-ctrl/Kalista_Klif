@@ -39,6 +39,7 @@ def generate_item(rng,level,rarity,identifier):
             ally={'Атака':attack};root={'attack':attack}
             if weapon=='Посох':
                 intel=max(1,round((1+level/10)*factor));ally['Интеллект']=intel;root['int']=intel
+                power=max(1,round((2+level/10)*factor));ally['Сила заклинаний']=power;root['spell_power']=power
             item['name']=weapon+' '+suffix
         item['gear']=dict(slot=slot,ally_bonuses=ally,root_bonuses=root)
         item['desc']='; '.join(f'{k}: +{v}' for k,v in ally.items())+'. Сгенерированный предмет; ведущий может скорректировать свойства до выдачи.'

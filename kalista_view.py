@@ -3,6 +3,7 @@ import streamlit as st
 import kalista_engine as e
 from kalista_rarity import rarity_label,rarity_badge
 from html import escape
+from kalista_growth import effective_item
 
 def editing():return bool(st.session_state.get('_edit_mode',False))
 
@@ -20,11 +21,12 @@ def show_book(actions,spells=False):
             if a.get('kind','damage')=='damage':st.caption('Попаданий: '+str(a.get('hits',1)))
     st.caption('Применение — на странице «Бой». Настройка — в режиме редактирования.')
 
-ROOT_BONUS_LABELS={'armor':'Броня','attack':'Атака','int':'Интеллект','wis':'Мудрость','spi':'Дух','fire':'Огонь','dark':'Тьма','earth':'Земля','water':'Вода','air':'Воздух','light':'Свет'}
-PERCENT_BONUSES={'Огонь','Тьма','Земля','Вода','Воздух','Свет','Шанс крита'}
+ROOT_BONUS_LABELS={'spell_power':'Сила заклинаний','armor':'Броня','attack':'Атака','int':'Интеллект','wis':'Мудрость','spi':'Дух','fire':'Огонь','dark':'Тьма','earth':'Земля','water':'Вода','air':'Воздух','light':'Свет'}
+PERCENT_BONUSES={'Огонь','Тьма','Земля','Вода','Воздух','Свет','Шанс крита','Сила заклинаний'}
 
 def bonus_values(item,root=False):
-    source=item if root else item.get('bonuses',{})
+    current=effective_item(item,root)
+    source=current if root else current.get('bonuses',{})
     result=[]
     for key,value in source.items():
         if root and key not in ROOT_BONUS_LABELS:continue
@@ -40,6 +42,9 @@ def show_gear(item,root=False):
         st.caption('Ячейка свободна')
         return
     st.markdown(rarity_badge(item),unsafe_allow_html=True)
+    if item.get('growth'):
+        growth=item['growth'];owner='Калисте' if growth['owner']=='player' else 'Шеогарату'
+        st.caption(f"Привязано к {owner} · +2% исходных бонусов за уровень · исходный уровень {growth['anchor_level']}")
     description=item.get('description',item.get('desc',''))
     if description:st.write(description)
     values=bonus_values(item,root)

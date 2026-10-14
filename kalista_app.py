@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v33 · полный лист игрока
+Калиста Клиф — v34 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -1238,7 +1238,7 @@ def render_loot(data):
                     item['qty']=st.number_input('Количество',min_value=1,max_value=100,value=item['qty'])
                     item['desc']=st.text_area('Свойства и описание',item['desc'])
                     if item.get('gear'):
-                        root_keys={'Броня':'armor','Атака':'attack','Интеллект':'int'}
+                        root_keys={'Броня':'armor','Атака':'attack','Интеллект':'int','Сила заклинаний':'spell_power'}
                         for key,value in list(item['gear']['ally_bonuses'].items()):
                             new=st.number_input('Бонус: '+key,min_value=0,value=value)
                             item['gear']['ally_bonuses'][key]=new
@@ -1348,7 +1348,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 23:
+if data.get("schema_version", 5) < 24:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1506,10 +1506,12 @@ elif page=="Экипировка":
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Экипировка</div>", unsafe_allow_html=True)
     for slot,it in data["equipment"].items():
         with st.expander(f"{'🔹' if it.get('name') else '▫️'} {slot.replace(' (посох)','')}: {it.get('name') or '—'}"):
+            if it.get("growth"):st.caption(f"Исходные бонусы на уровне {it['growth']['anchor_level']}; текущие значения с ростом — в обычном просмотре.")
             it["rarity"]=st.selectbox("Редкость",RARITIES,index=RARITIES.index(it.get("rarity","Обычный")),key=f"rarity_{slot}")
             it["name"]=st.text_input("Название",it.get("name",""),key=f"n{slot}")
             c=st.columns(4)
             it["armor"]=c[0].number_input("Броня",0,value=int(it.get("armor",0)),key=f"a{slot}")
+            it["spell_power"]=st.number_input("Сила заклинаний (%)",value=float(it.get("spell_power",0)),key=f"power_{slot}")
             it["attack"]=c[1].number_input("Атака",0,value=int(it.get("attack",0)),key=f"t{slot}")
             it["int"]=c[2].number_input("Интеллект",0,value=int(it.get("int",0)),key=f"i{slot}")
             it["wis"]=c[3].number_input("Мудрость",0,value=int(it.get("wis",0)),key=f"w{slot}")

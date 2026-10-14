@@ -162,17 +162,19 @@ def gear_form(root,item,expected,default_slot="Резерв"):
         equipped=st.checkbox('Надето',x['equipped'],key=prefix+'_equipped')
         desc=st.text_area('Описание / свойства',x['description'],key=prefix+'_desc')
         st.caption('Введите только известные числовые бонусы. Особые свойства остаются в описании.')
+        if x.get('growth'):st.caption(f"Это исходные бонусы на уровне {x['growth']['anchor_level']}. Текущие бонусы с ростом показаны в обычном просмотре.")
         bonuses={}
         columns=st.columns(4)
         for index,key in enumerate(BONUSES):
             value=x['bonuses'].get(key,0)
-            numeric=float(value) if key in ('Атака','Критический урон','Шанс крита') else int(value)
-            label=key+' (%)' if key in e.ELEMENTS or key=='Шанс крита' else key
+            numeric=float(value) if key in ('Атака','Сила заклинаний','Критический урон','Шанс крита') else int(value)
+            label=key+' (%)' if key in e.ELEMENTS or key in ('Шанс крита','Сила заклинаний') else key
             bonuses[key]=columns[index%4].number_input(label,value=numeric,key=prefix+'_'+key)
         if st.form_submit_button('Сохранить снаряжение'):
             if equipped and slot in EQUIPMENT_SLOTS and any(old['equipped'] and old['slot']==slot and old['id']!=x['id'] for old in expected):
                 st.error('Ячейка занята. Сначала сними текущий предмет или выбери другую ячейку.');return
             new=dict(id=x['id'] if item else uuid4().hex,slot=slot,name=name,description=desc,rarity=rarity,bonuses=bonuses,equipped=equipped)
+            if x.get('growth'):new['growth']=deepcopy(x['growth'])
             values=[new if old['id']==x['id'] else old for old in expected] if item else expected+[new]
             commit(root,'equipment',values,expected)
     if item and st.button('Удалить снаряжение',key=prefix+'_delete'):commit(root,'equipment',[old for old in expected if old['id']!=x['id']],expected)

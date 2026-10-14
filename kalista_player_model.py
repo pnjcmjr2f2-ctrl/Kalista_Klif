@@ -3,13 +3,14 @@ from copy import deepcopy
 from uuid import uuid4
 import math
 from kalista_rarity import validate_rarity
+from kalista_growth import ensure_growth,effective_item
 from kalista_progression import MAX_LEVEL,advance_levels
 from urllib.parse import urlparse
 
 STATS=('Сила','Выносливость','Ловкость','Мудрость','Интеллект','Харизма')
 EQUIPMENT_SLOTS=('Оружие 1','Оружие 2','Шлем','Наплечники','Перчатки','Нагрудник','Пояс','Штаны','Сапоги','Серьга 1','Серьга 2','Ожерелье','Кольцо 1','Кольцо 2','Кольцо 3','Кольцо 4')
 ITEM_TYPES=('Расходник','Реагент','Свиток','Оружие','Броня','Реликвия','Инструмент','Книга','Валюта','Прочее')
-BONUSES=STATS+('Броня','Атака','Критический урон','Шанс крита','Огонь','Земля','Вода','Воздух','Тьма','Свет')
+BONUSES=STATS+('Броня','Атака','Сила заклинаний','Критический урон','Шанс крита','Огонь','Земля','Вода','Воздух','Тьма','Свет')
 
 def number(value,label,minimum=None):
     if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or (minimum is not None and value<minimum):
@@ -18,8 +19,9 @@ def number(value,label,minimum=None):
 def gear_totals(profile):
     totals={key:0 for key in BONUSES}
     for item in profile['equipment']:
+        ensure_growth(item,'ally',profile['level'])
         if item['equipped']:
-            for key,value in item['bonuses'].items(): totals[key]+=value
+            for key,value in effective_item(item)['bonuses'].items(): totals[key]+=value
     return totals
 
 def ensure_player_sheet(ally):
@@ -105,6 +107,7 @@ def validate_player_sheet(ally):
 def recalc_player(ally):
     p=ally['sheet_profile'];advance_levels(p);g=gear_totals(p);a=p['formula_adjustments']
     p['stats']={key:max(0,p['base_stats'][key]+g[key]+p['stat_adjustments'][key]) for key in STATS}
+    ally['spell_power']=max(0,(p['stats']['Интеллект']/5+g['Сила заклинаний'])/100)
     ally['hp_max']=max(1,round(p['level']*20+p['stats']['Выносливость']*10+a['hp']))
     ally['hp']=min(ally['hp'],ally['hp_max'])
     ally['armor']=max(0,round(10+p['stats']['Выносливость']*5+g['Броня']+a['armor']))
