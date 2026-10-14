@@ -1,21 +1,106 @@
-<!doctype html><html lang="ru"><meta charset="utf-8"><style>
-body{margin:0;background:#211a28;color:#eee5f3;font:14px system-ui}header{display:flex;gap:6px;align-items:center;padding:8px;flex-wrap:wrap}button{background:#44324f;color:#fff;border:1px solid #8c709e;border-radius:8px;padding:8px 12px;cursor:pointer}canvas{display:block;width:100%;height:400px;touch-action:none}#hint{padding:8px;min-height:36px;color:#d3c0df}button:focus-visible{outline:2px solid orange}</style>
-<header><button id="plus" aria-label="Приблизить карту">＋</button><button id="minus" aria-label="Отдалить карту">−</button><button id="fit">Все участники</button><button id="pan">✋ Сдвиг поля</button></header><canvas aria-label="Свободная карта боя"></canvas><div id="hint"></div><div id="legend" style="padding:0 8px 10px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px"></div>
+<!doctype html>
+<html lang="ru"><meta charset="utf-8">
+<style>
+body{margin:0;background:#211a28;color:#eee5f3;font:14px system-ui}
+header{display:flex;gap:6px;align-items:center;padding:8px;flex-wrap:wrap}
+button{background:#44324f;color:#fff;border:1px solid #8c709e;border-radius:8px;padding:8px 12px;cursor:pointer}
+canvas{display:block;width:100%;height:400px;touch-action:none}
+#hint{padding:8px;min-height:36px;color:#d3c0df}
+#legend{padding:0 8px 10px;display:flex;gap:8px;flex-wrap:wrap;font-size:12px}
+button:focus-visible{outline:2px solid orange}
+</style>
+<header>
+<button id="plus" aria-label="Приблизить карту">＋</button>
+<button id="minus" aria-label="Отдалить карту">−</button>
+<button id="fit">Все участники</button>
+<button id="location" hidden>Вся локация</button>
+<button id="pan">✋ Сдвиг поля</button>
+<button id="reset" hidden>Сбросить точки</button>
+</header>
+<canvas aria-label="Свободная карта боя"></canvas><div id="hint"></div><div id="legend"></div>
 <script>
-const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d'),hint=document.querySelector('#hint');let args={},scale=4,offset=[0,0],chosen=null,drag=null,pan=false,epoch='',width=600;
+const canvas=document.querySelector('canvas'),ctx=canvas.getContext('2d'),hint=document.querySelector('#hint');
+let args={},scale=4,offset=[0,0],chosen=null,drag=null,pan=false,epoch='',width=600,calibrationPoints=[],image=null,imageId='';
 function send(type,extra={}){parent.postMessage({isStreamlitMessage:true,type,...extra},'*')}
-function world(p){return [(p[0]-offset[0])/scale,(offset[1]-p[1])/scale]}function screen(p){return [offset[0]+p[0]*scale,offset[1]-p[1]*scale]}function local(e){let r=canvas.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top]}
-function fit(){width=canvas.clientWidth;let ps=(args.actors||[]).map(a=>a.position);if(!ps.length)ps=[[0,0]];let region=args.mode==='area'?args.center:(args.actors||[]).find(a=>a.id===args.source)?.position;let rad=args.mode==='area'?args.radius:30;if(region&&rad)ps.push([region[0]-rad,region[1]-rad],[region[0]+rad,region[1]+rad]);let xs=ps.map(p=>p[0]),ys=ps.map(p=>p[1]);let minX=Math.min(...xs)-15,maxX=Math.max(...xs)+15,minY=Math.min(...ys)-15,maxY=Math.max(...ys)+15;scale=Math.min(width/(maxX-minX),400/(maxY-minY));offset=[width/2-(minX+maxX)/2*scale,200+(minY+maxY)/2*scale];draw()}
-function ring(p,r,color,fill){let s=screen(p);ctx.beginPath();ctx.arc(...s,r*scale,0,Math.PI*2);ctx.fillStyle=fill;ctx.fill();ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.stroke()}
-function draw(){width=canvas.clientWidth;let d=devicePixelRatio||1;canvas.width=width*d;canvas.height=400*d;ctx.setTransform(d,0,0,d,0,0);ctx.fillStyle='#211a28';ctx.fillRect(0,0,width,400);let actor=(args.actors||[]).find(a=>a.id===args.source),dest=chosen||args.center;
-if(actor&&args.mode==='move')ring(actor.position,30,'#91c5a6','#91c5a60c');if(dest&&args.radius)ring(dest,args.radius,'#ffb45e','#ff8f0033');
-if(dest&&actor){let a=screen(actor.position),b=screen(dest),dist=Math.hypot(dest[0]-actor.position[0],dest[1]-actor.position[1]);ctx.strokeStyle=dist>30&&args.mode==='move'?'#ed7586':'#d7b9ed';ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#fff';ctx.fillText(dist.toFixed(1)+' м',(a[0]+b[0])/2+4,(a[1]+b[1])/2-7);ctx.beginPath();ctx.arc(...b,5,0,Math.PI*2);ctx.fill();hint.textContent=(args.mode==='area'?'Центр области':'Перемещение')+': '+dist.toFixed(1)+' м'+(args.mode==='move'&&dist>30?' · больше 30 м':'')}
-else hint.textContent=pan?'Потяни поле для просмотра':'Потяни свою фигурку или коснись нужной точки';
-(args.actors||[]).forEach((a,index)=>{let s=screen(a.id===args.source&&dest&&args.mode!=='area'?dest:a.position),hit=dest&&args.radius&&Math.hypot(a.position[0]-dest[0],a.position[1]-dest[1])<=args.radius;ctx.beginPath();ctx.arc(...s,14,0,Math.PI*2);ctx.fillStyle=a.enemy?'#d66c7f':'#91c5a6';ctx.fill();ctx.strokeStyle=hit?'#ffb45e':a.id===args.source?'#dcc0f3':'#4c3e55';ctx.lineWidth=hit||a.id===args.source?3:1;ctx.stroke();ctx.fillStyle='#1b1520';ctx.textAlign='center';ctx.fillText(String(index+1),s[0],s[1]+5);ctx.textAlign='left'});ctx.fillStyle='#b7a5c4';ctx.fillRect(12,382,10*scale,2);ctx.fillText('10 м',12,374)}
-canvas.onpointerdown=e=>{canvas.setPointerCapture(e.pointerId);let p=local(e);drag={p,offset:[...offset],pan};if(!pan){chosen=world(p);draw()}};
-canvas.onpointermove=e=>{if(!drag)return;let p=local(e);if(drag.pan)offset=[drag.offset[0]+p[0]-drag.p[0],drag.offset[1]+p[1]-drag.p[1]];else chosen=world(p);draw()};
-canvas.onpointerup=e=>{if(drag&&!drag.pan&&chosen)send('streamlit:setComponentValue',{value:{epoch:args.epoch,point:chosen},dataType:'json'});drag=null};canvas.onpointercancel=()=>drag=null;
-function zoom(f){let p=world([width/2,200]);scale=Math.max(.1,Math.min(30,scale*f));offset=[width/2-p[0]*scale,200+p[1]*scale];draw()}
-document.querySelector('#plus').onclick=()=>zoom(1.3);document.querySelector('#minus').onclick=()=>zoom(1/1.3);document.querySelector('#fit').onclick=fit;document.querySelector('#pan').onclick=()=>{pan=!pan;document.querySelector('#pan').textContent=pan?'✋ Сдвиг включён':'✋ Сдвиг поля';draw()};
-window.addEventListener('message',e=>{if(e.source!==parent||e.data.type!=='streamlit:render')return;args=e.data.args;if(epoch!==args.epoch){epoch=args.epoch;chosen=null;fit()}draw();let legend=document.querySelector('#legend');legend.replaceChildren();(args.actors||[]).forEach((a,i)=>{let label=document.createElement('span');label.textContent=(i+1)+'. '+a.name;label.style.color=a.enemy?'#ed9daa':'#91c5a6';legend.append(label)});send('streamlit:setFrameHeight',{height:document.body.scrollHeight})});window.onresize=()=>{draw();send('streamlit:setFrameHeight',{height:document.body.scrollHeight})};send('streamlit:componentReady',{apiVersion:1});send('streamlit:setFrameHeight',{height:490});
+function world(p){return [(p[0]-offset[0])/scale,(offset[1]-p[1])/scale]}
+function screen(p){return [offset[0]+p[0]*scale,offset[1]-p[1]*scale]}
+function local(e){const r=canvas.getBoundingClientRect();return [e.clientX-r.left,e.clientY-r.top]}
+function bounds(){const b=args.background;return b?[[0,0],[b.width*b.metres_per_pixel,-b.height*b.metres_per_pixel]]:[]}
+function fit(locationOnly=false){
+ width=canvas.clientWidth;
+ let ps=locationOnly?bounds():(args.actors||[]).map(a=>a.position).concat(bounds());
+ if(!ps.length)ps=[[0,0]];
+ const region=args.mode==='area'?args.center:(args.actors||[]).find(a=>a.id===args.source)?.position;
+ const radius=args.mode==='area'?args.radius:30;
+ if(!locationOnly&&region&&radius)ps.push([region[0]-radius,region[1]-radius],[region[0]+radius,region[1]+radius]);
+ const xs=ps.map(p=>p[0]),ys=ps.map(p=>p[1]);
+ const minX=Math.min(...xs),maxX=Math.max(...xs),minY=Math.min(...ys),maxY=Math.max(...ys);
+ scale=Math.min((width-32)/Math.max(maxX-minX,1),368/Math.max(maxY-minY,1));
+ offset=[width/2-(minX+maxX)/2*scale,200+(minY+maxY)/2*scale];draw();
+}
+function ring(p,r,color,fill){const s=screen(p);ctx.beginPath();ctx.arc(...s,r*scale,0,Math.PI*2);ctx.fillStyle=fill;ctx.fill();ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.stroke()}
+function ruler(first,second,label){const a=screen(first),b=screen(second);ctx.strokeStyle='#dcc0f3';ctx.lineWidth=2;ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#fff';ctx.fillText(label,(a[0]+b[0])/2+4,(a[1]+b[1])/2-7)}
+function draw(){
+ width=canvas.clientWidth;const d=devicePixelRatio||1;canvas.width=width*d;canvas.height=400*d;ctx.setTransform(d,0,0,d,0,0);
+ ctx.fillStyle='#211a28';ctx.fillRect(0,0,width,400);ctx.font='13px system-ui';
+ const background=args.background;
+ if(background&&image?.complete&&image.naturalWidth){
+  const start=screen([0,0]);
+  // One uniform metres/pixel ratio on both axes. Never stretch to viewport.
+  ctx.drawImage(image,start[0],start[1],background.width*background.metres_per_pixel*scale,background.height*background.metres_per_pixel*scale);
+ }
+ if(args.mode==='calibrate'){
+  calibrationPoints.forEach((p,i)=>{const s=screen([p[0],-p[1]]);ctx.beginPath();ctx.arc(...s,7,0,Math.PI*2);ctx.fillStyle='#ffb45e';ctx.fill();ctx.fillStyle='#fff';ctx.fillText(String(i+1),s[0]+10,s[1]-10)});
+  if(calibrationPoints.length===2)ruler([calibrationPoints[0][0],-calibrationPoints[0][1]],[calibrationPoints[1][0],-calibrationPoints[1][1]],'Контрольный отрезок');
+  hint.textContent=pan?'Сдвинь изображение для выбора ориентиров':calibrationPoints.length===2?'Обе точки выбраны. Задай расстояние в метрах под картой.':'Коснись '+(calibrationPoints.length?'второй':'первой')+' точки контрольного отрезка';
+  return;
+ }
+ const actor=(args.actors||[]).find(a=>a.id===args.source),dest=chosen||args.center;
+ if(actor&&args.mode==='move')ring(actor.position,30,'#91c5a6','#91c5a60c');
+ if(dest&&args.radius)ring(dest,args.radius,'#ffb45e','#ff8f0033');
+ if(dest&&actor){
+  const dist=Math.hypot(dest[0]-actor.position[0],dest[1]-actor.position[1]);ruler(actor.position,dest,dist.toFixed(1)+' м');
+  const b=screen(dest);ctx.beginPath();ctx.arc(...b,5,0,Math.PI*2);ctx.fill();
+  hint.textContent=(args.mode==='area'?'Центр области':'Перемещение')+': '+dist.toFixed(1)+' м'+(args.mode==='move'&&dist>30?' · больше 30 м':'');
+ }else hint.textContent=pan?'Потяни поле для просмотра':'Потяни свою фигурку или коснись нужной точки';
+ (args.actors||[]).forEach((a,index)=>{
+  const s=screen(a.id===args.source&&dest&&args.mode!=='area'?dest:a.position);
+  const hit=dest&&args.radius&&Math.hypot(a.position[0]-dest[0],a.position[1]-dest[1])<=args.radius;
+  ctx.beginPath();ctx.arc(...s,14,0,Math.PI*2);ctx.fillStyle=a.enemy?'#d66c7f':'#91c5a6';ctx.fill();ctx.strokeStyle=hit?'#ffb45e':a.id===args.source?'#dcc0f3':'#4c3e55';ctx.lineWidth=hit||a.id===args.source?3:1;ctx.stroke();ctx.fillStyle='#1b1520';ctx.textAlign='center';ctx.fillText(String(index+1),s[0],s[1]+5);ctx.textAlign='left';
+ });
+ ctx.fillStyle='#17121dcc';ctx.fillRect(5,354,Math.min(width-10,10*scale+16),40);ctx.fillStyle='#e9d7f7';ctx.fillRect(12,382,10*scale,2);ctx.fillText('10 м',12,374);
+}
+canvas.onpointerdown=e=>{canvas.setPointerCapture(e.pointerId);const p=local(e);drag={p,offset:[...offset],pan};if(!pan&&args.mode!=='calibrate'){chosen=world(p);draw()}};
+canvas.onpointermove=e=>{if(!drag)return;const p=local(e);if(drag.pan)offset=[drag.offset[0]+p[0]-drag.p[0],drag.offset[1]+p[1]-drag.p[1]];else if(args.mode!=='calibrate')chosen=world(p);draw()};
+canvas.onpointerup=e=>{
+ if(drag&&!drag.pan){
+  if(args.mode==='calibrate'){
+   const p=world(local(e)),b=args.background,pixel=[p[0],-p[1]];
+   if(pixel[0]>=0&&pixel[0]<=b.width&&pixel[1]>=0&&pixel[1]<=b.height){if(calibrationPoints.length===2)calibrationPoints=[];calibrationPoints.push(pixel);draw();send('streamlit:setComponentValue',{value:{epoch:args.epoch,points:calibrationPoints},dataType:'json'})}
+   else hint.textContent='Выбери точку внутри изображения';
+  }else if(chosen)send('streamlit:setComponentValue',{value:{epoch:args.epoch,point:chosen},dataType:'json'});
+ }
+ drag=null;
+};
+canvas.onpointercancel=()=>drag=null;
+function zoom(f){const p=world([width/2,200]);scale=Math.max(.0001,Math.min(100,scale*f));offset=[width/2-p[0]*scale,200+p[1]*scale];draw()}
+document.querySelector('#plus').onclick=()=>zoom(1.3);
+document.querySelector('#minus').onclick=()=>zoom(1/1.3);
+document.querySelector('#fit').onclick=()=>fit();
+document.querySelector('#location').onclick=()=>fit(true);
+document.querySelector('#pan').onclick=()=>{pan=!pan;document.querySelector('#pan').textContent=pan?'✋ Сдвиг включён':'✋ Сдвиг поля';draw()};
+document.querySelector('#reset').onclick=()=>{calibrationPoints=[];draw();send('streamlit:setComponentValue',{value:{epoch:args.epoch,points:[]},dataType:'json'})};
+window.addEventListener('message',e=>{
+ if(e.source!==parent||e.data.type!=='streamlit:render')return;
+ args=e.data.args;
+ if(imageId!==args.background?.id){imageId=args.background?.id||'';image=null;if(args.background){image=new Image();image.onload=draw;image.src=args.background.src}}
+ if(epoch!==args.epoch){epoch=args.epoch;chosen=null;calibrationPoints=[];fit()}
+ document.querySelector('#reset').hidden=args.mode!=='calibrate';document.querySelector('#location').hidden=!args.background;
+ document.querySelector('#fit').textContent=args.mode==='calibrate'?'Всё изображение':'Все участники';draw();
+ const legend=document.querySelector('#legend');legend.replaceChildren();
+ (args.actors||[]).forEach((a,i)=>{const label=document.createElement('span');label.textContent=(i+1)+'. '+a.name;label.style.color=a.enemy?'#ed9daa':'#91c5a6';legend.append(label)});
+ send('streamlit:setFrameHeight',{height:document.body.scrollHeight});
+});
+window.onresize=()=>{draw();send('streamlit:setFrameHeight',{height:document.body.scrollHeight})};
+send('streamlit:componentReady',{apiVersion:1});send('streamlit:setFrameHeight',{height:490});
 </script></html>

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v39 · полный лист игрока
+Калиста Клиф — v40 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -779,6 +779,12 @@ def render_tactical_map(data,source,target,player_mode=False):
     from kalista_map import map_svg,point,map_legend
     if data.get('distance_mode')!='meters':return
     from kalista_interactive_map import tactical_map
+    if editing() and not player_mode:
+        from kalista_map_library_ui import render_library
+        render_library(data,persist_and_rerun)
+    from kalista_map_background import background
+    backdrop=background(data)
+    if backdrop:st.caption('Локация: '+backdrop['name']+f" · {backdrop['width']*backdrop['metres_per_pixel']:.1f} × {backdrop['height']*backdrop['metres_per_pixel']:.1f} м")
     with st.expander('Карта боя · фигурки',expanded=True):
         a=participant(data,source);action=next(x for x in a['actions'] if x.get('rule')=='move_point')
         setup=editing() and not player_mode and st.toggle('Расстановка ведущего',key='map_setup_'+source)

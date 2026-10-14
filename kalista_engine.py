@@ -243,7 +243,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -274,6 +274,8 @@ def migrate(saved):
     data.setdefault('distance_mode','legacy')
     if data['distance_mode'] not in ('legacy','meters'):raise ValueError('Неизвестный режим дистанций')
     ensure_positions(data)
+    from kalista_map_background import ensure_backgrounds
+    ensure_backgrounds(data)
     data.setdefault('distances',{})
     known={token for token,_ in participants(data)}
     if not isinstance(data['distances'],dict):raise ValueError('Повреждены дистанции')
@@ -483,7 +485,7 @@ def migrate(saved):
         if isinstance(item["spell_power"],bool) or not isinstance(item["spell_power"],(int,float)) or not math.isfinite(item["spell_power"]):raise ValueError("Неверная сила заклинаний предмета")
     ensure_rarities(data)
     bind_registry(data)
-    data["schema_version"] = 25
+    data["schema_version"] = 26
     return data
 
 
@@ -1381,8 +1383,13 @@ def activate_scene(data, scene_id):
     if scene is None: raise ValueError('Сцена больше не существует')
     for other in data['scenes']:
         if other['id'] != scene_id and other['status'] == 'Идёт': other['status'] = 'На паузе'
+    from kalista_map_background import remember_layout, restore_layout
+    remember_layout(data)
     scene['status'] = 'Идёт'
     data['active_scene_id'] = scene_id
+    restore_layout(data)
+    data['map_revision']=data.get('map_revision',0)+1
+    invalidate_player_requests(data,'Сцена изменилась; предложи действие заново')
 
 
 def update_scene(data, scene_id, changes):
@@ -1393,10 +1400,17 @@ def update_scene(data, scene_id, changes):
     scene['id'] = scene_id
     scene['name'] = scene['name'].strip()
     if scene['status'] == 'Идёт': activate_scene(candidate, scene_id)
-    elif candidate['active_scene_id'] == scene_id: candidate['active_scene_id'] = ''
+    elif candidate['active_scene_id'] == scene_id:
+        from kalista_map_background import remember_layout,restore_layout
+        remember_layout(candidate)
+        candidate['active_scene_id'] = ''
+        restore_layout(candidate)
+        candidate['map_revision']=candidate.get('map_revision',0)+1
+        invalidate_player_requests(candidate,'Сцена изменилась; предложи действие заново')
     validate_campaign(candidate)
     data['scenes'] = candidate['scenes']
     data['active_scene_id'] = candidate['active_scene_id']
+    for key in ('positions','map_revision','battle_maps','player_requests'):data[key]=candidate[key]
 
 
 def update_npc(data, npc_id, changes):
