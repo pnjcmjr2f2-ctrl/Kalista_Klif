@@ -107,6 +107,7 @@ def inventory(data,root):
         with st.container(key='inventory_row_player_'+item['id']):
             cols=st.columns([3,1,1,1])
             cols[0].markdown('**'+escape(item['name'])+'** · '+escape(item['type']))
+            cols[0].markdown(e.rarity_badge(item),unsafe_allow_html=True)
             cols[1].write('× '+str(item['qty']))
             if item['desc']:cols[0].caption(item['desc'])
             if item['use']:
@@ -124,12 +125,13 @@ def item_form(data,root,item,expected):
         name=st.text_input('Название предмета',x['name'],key=prefix+'_name')
         types=list(ITEM_TYPES)+( [x['type']] if x['type'] not in ITEM_TYPES else [])
         kind=st.selectbox('Тип',types,index=types.index(x['type']),key=prefix+'_type')
+        rarity=st.selectbox('Редкость',e.RARITIES,index=e.RARITIES.index(x.get('rarity','Обычный')),key=prefix+'_rarity')
         qty=st.number_input('Количество',min_value=0,value=x['qty'],key=prefix+'_qty')
         desc=st.text_area('Описание предмета',x['desc'],key=prefix+'_desc')
         use=st.selectbox('При использовании',['Нет','Лечение','Мана','Щит'],index=['Нет','heal','mana','shield'].index(x['use']['kind'] if x['use'] else 'Нет'),key=prefix+'_use')
         value=st.number_input('Сила применения',min_value=0,value=x['use']['value'] if x['use'] else 0,key=prefix+'_value')
         if st.form_submit_button('Сохранить предмет' if item else 'Добавить предмет'):
-            new=dict(id=x['id'] if item else uuid4().hex,name=name,type=kind,qty=qty,desc=desc,use=None if use=='Нет' else dict(kind={'Лечение':'heal','Мана':'mana','Щит':'shield'}[use],value=value))
+            new=dict(id=x['id'] if item else uuid4().hex,name=name,type=kind,qty=qty,desc=desc,rarity=rarity,use=None if use=='Нет' else dict(kind={'Лечение':'heal','Мана':'mana','Щит':'shield'}[use],value=value))
             items=[new if old['id']==x['id'] else old for old in expected['items']] if item else expected['items']+[new]
             commit(root,'inventory',dict(items=items,currency=expected['currency']),expected)
 
@@ -142,7 +144,7 @@ def equipment(data,root):
         if not items:
             with st.expander('▫️ '+slot+': —'):gear_form(root,None,expected,slot)
         for item in items:
-            with st.expander('🔹 '+slot+': '+item['name']):gear_form(root,item,expected)
+            with st.expander(e.rarity_label(item)+' · '+slot+': '+item['name']):gear_form(root,item,expected)
     reserve=[x for x in p['equipment'] if not x['equipped'] or x['slot'] not in EQUIPMENT_SLOTS]
     if reserve:st.markdown('**Резерв и другие ячейки**')
     for item in reserve:
@@ -156,6 +158,7 @@ def gear_form(root,item,expected,default_slot="Резерв"):
         name=st.text_input('Название',x['name'],key=prefix+'_name')
         slots=list(EQUIPMENT_SLOTS)+['Резерв']+([x['slot']] if x['slot'] not in EQUIPMENT_SLOTS and x['slot']!='Резерв' else [])
         slot=st.selectbox('Ячейка',slots,index=slots.index(x['slot']),key=prefix+'_slot')
+        rarity=st.selectbox('Редкость',e.RARITIES,index=e.RARITIES.index(x.get('rarity','Обычный')),key=prefix+'_rarity')
         equipped=st.checkbox('Надето',x['equipped'],key=prefix+'_equipped')
         desc=st.text_area('Описание / свойства',x['description'],key=prefix+'_desc')
         st.caption('Введите только известные числовые бонусы. Особые свойства остаются в описании.')
@@ -169,7 +172,7 @@ def gear_form(root,item,expected,default_slot="Резерв"):
         if st.form_submit_button('Сохранить снаряжение'):
             if equipped and slot in EQUIPMENT_SLOTS and any(old['equipped'] and old['slot']==slot and old['id']!=x['id'] for old in expected):
                 st.error('Ячейка занята. Сначала сними текущий предмет или выбери другую ячейку.');return
-            new=dict(id=x['id'] if item else uuid4().hex,slot=slot,name=name,description=desc,bonuses=bonuses,equipped=equipped)
+            new=dict(id=x['id'] if item else uuid4().hex,slot=slot,name=name,description=desc,rarity=rarity,bonuses=bonuses,equipped=equipped)
             values=[new if old['id']==x['id'] else old for old in expected] if item else expected+[new]
             commit(root,'equipment',values,expected)
     if item and st.button('Удалить снаряжение',key=prefix+'_delete'):commit(root,'equipment',[old for old in expected if old['id']!=x['id']],expected)

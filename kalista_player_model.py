@@ -2,6 +2,7 @@
 from copy import deepcopy
 from uuid import uuid4
 import math
+from kalista_rarity import validate_rarity
 from kalista_progression import MAX_LEVEL,advance_levels
 from urllib.parse import urlparse
 
@@ -71,6 +72,7 @@ def validate_player_sheet(ally):
         if not isinstance(p[collection],list): raise ValueError('Ожидается список: '+collection)
         ids=set()
         for item in p[collection]:
+            if collection in ('inventory','equipment'):validate_rarity(item)
             if not isinstance(item,dict) or not isinstance(item.get('id'),str) or not item['id'] or item['id'] in ids: raise ValueError('Неверный ID: '+collection)
             ids.add(item['id'])
             if not isinstance(item.get('name'),str) or not item['name'].strip(): raise ValueError('Укажи название')

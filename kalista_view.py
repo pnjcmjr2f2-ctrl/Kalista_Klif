@@ -1,6 +1,7 @@
 """Read-only character views. Editing mode affects presentation, not permissions."""
 import streamlit as st
 import kalista_engine as e
+from kalista_rarity import rarity_label,rarity_badge
 
 def editing():return bool(st.session_state.get('_edit_mode',False))
 
@@ -21,6 +22,7 @@ def show_book(actions,spells=False):
 def player_view(section,data,root,commit):
     if editing() or section in ('Обзор','Бой','Кубики','Сцена'):return False
     a=data['ally'];p=a['sheet_profile'];st.subheader(section)
+    selected=st.selectbox('Редкость предметов',['Все']+list(e.RARITIES),key='ps_view_rarity_'+section) if section in ('Снаряжение','Инвентарь') else 'Все'
     if section=='Характеристики':
         show_stats(p['stats'].items());st.caption(f"Уровень {p['level']} · Свободные очки {p['free_points']}")
         show_stats([('Броня',a['armor']),('Атака',p['attack']),('Критический урон',p['critical_damage']),('Шанс крита',str(p['critical_chance'])+'%')])
@@ -30,18 +32,30 @@ def player_view(section,data,root,commit):
     elif section=='Снаряжение':
         from kalista_player_model import EQUIPMENT_SLOTS
         for slot in EQUIPMENT_SLOTS:
-            items=[x for x in p['equipment'] if x['equipped'] and x['slot']==slot]
+            items=[x for x in p['equipment'] if x['equipped'] and x['slot']==slot and (selected=='Все' or x.get('rarity','Обычный')==selected)]
+            if selected!='Все' and not items:continue
             with st.expander(slot+': '+(', '.join(x['name'] for x in items) or '—')):
-                for x in items:st.write(x['description']);st.write({k:v for k,v in x['bonuses'].items() if v})
+                for x in items:st.markdown(rarity_badge(x),unsafe_allow_html=True);st.write(x['description']);st.write({k:v for k,v in x['bonuses'].items() if v})
         with st.expander('Резерв'):
+            from copy import deepcopy
+            from kalista_player_model import sheet_snapshot
             for x in p['equipment']:
-                if not x['equipped']:st.write(x['name'])
+                if not x['equipped'] and (selected=='Все' or x.get('rarity','Обычный')==selected):
+                    st.write(x['name']+' · '+rarity_label(x))
+                    st.caption(x['description'])
+                    if x['slot'] in EQUIPMENT_SLOTS and st.button('Надеть',key='ps_reserve_equip_'+x['id']):
+                        expected=sheet_snapshot(data,'equipment');values=deepcopy(expected)
+                        for old in values:
+                            if old['slot']==x['slot']:old['equipped']=old['id']==x['id']
+                        commit(root,'equipment',values,expected)
     elif section=='Инвентарь':
         from kalista_player_model import sheet_snapshot
         st.caption(f"Золото {p['currency']['gold']} · Серебро {p['currency']['silver']} · Медь {p['currency']['copper']}")
         expected=sheet_snapshot(data,'inventory')
         for x in p['inventory']:
+            if selected!='Все' and x.get('rarity','Обычный')!=selected:continue
             cols=st.columns([4,1]);cols[0].write(f"**{x['name']}** × {x['qty']}")
+            cols[0].markdown(rarity_badge(x),unsafe_allow_html=True)
             if x['desc']:cols[0].caption(x['desc'])
             if x.get('use') and cols[1].button('Применить',key='ps_view_use_'+x['id'],disabled=x['qty']<=0 or x['use']['value']<=0):commit(root,'inventory',None,expected,x['id'])
     elif section=='Квесты':
@@ -52,9 +66,10 @@ def player_view(section,data,root,commit):
     else:return False
     return True
 
-def gm_view(page,data,apply_item,apply_special=None):
+def gm_view(page,data,apply_item,apply_special=None,apply_equip=None):
     if editing() or page not in ('Экипировка','Инвентарь','Характеристики','Заклинания','Квесты','Ведущий'):return False
     st.subheader(page)
+    selected=st.selectbox('Редкость предметов',['Все']+list(e.RARITIES),key='root_view_rarity_'+page) if page in ('Экипировка','Инвентарь') else 'Все'
     if page=='Заклинания':show_book(data['spells'],True)
     elif page=='Характеристики':
         show_stats([(n,e.total_stat(data,n)) for n in data['base_stats']]);st.caption(f"Уровень {data['level']} · Свободные очки {data['free_points']}")
@@ -69,11 +84,19 @@ def gm_view(page,data,apply_item,apply_special=None):
                     if not allowed:st.caption(reason)
     elif page=='Экипировка':
         for slot,x in data['equipment'].items():
-            with st.expander(slot+': '+(x['name'] or '—')):st.write({k:v for k,v in x.items() if k!='name' and v})
+            if selected!='Все' and x.get('rarity','Обычный')!=selected:continue
+            with st.expander(slot+': '+(x['name'] or '—')):st.markdown(rarity_badge(x),unsafe_allow_html=True);st.write({k:v for k,v in x.items() if k!='name' and v})
+        with st.expander('Резерв'):
+            for x in data.get('equipment_reserve',[]):
+                if selected!='Все' and x.get('rarity','Обычный')!=selected:continue
+                st.write(x['name']+' · '+rarity_label(x));st.caption(x.get('description',''))
+                if apply_equip and st.button('Надеть',key='root_reserve_equip_'+x['id']):apply_equip(x['id'])
     elif page=='Инвентарь':
         st.caption(f"Золото {data['gold']} · Серебро {data['silver']} · Медь {data['copper']}")
         for i,x in enumerate(data['inventory']):
+            if selected!='Все' and x.get('rarity','Обычный')!=selected:continue
             cols=st.columns([4,1]);cols[0].write(f"**{x['name']}** × {x['qty']}")
+            cols[0].markdown(rarity_badge(x),unsafe_allow_html=True)
             if x.get('desc'):cols[0].caption(x['desc'])
             if x.get('use') and cols[1].button('Применить',key='view_use_'+str(i),disabled=x['qty']<=0 or x['use']['value']<=0):apply_item(x)
     elif page=='Квесты':

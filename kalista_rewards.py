@@ -1,6 +1,7 @@
 """End-of-combat XP settlement. No loot or random reward rolls."""
 from uuid import uuid4
 from math import floor
+from kalista_loot import settings,roll_battle_loot
 from kalista_progression import advance_levels,MAX_LEVEL
 
 def begin_rewards(data):
@@ -9,7 +10,7 @@ def begin_rewards(data):
     if data['hp_current']>0 and 'player' not in data.get('turn_excluded',[]):party.append(dict(token='player',name=data['name'],level=data['level']))
     ally=data['ally'];p=ally.get('sheet_profile')
     if p and ally['hp']>0 and 'ally' not in data.get('turn_excluded',[]):party.append(dict(token='ally',name=ally['name'],level=p['level']))
-    data['battle_rewards']=dict(id=uuid4().hex,party=party,eligible=[],settled=False)
+    data['battle_rewards']=dict(id=uuid4().hex,party=party,eligible=[],settled=False,loot_settings=settings(data))
     for enemy in data['enemies']:register_enemy(data,enemy)
 
 def register_enemy(data,enemy):
@@ -47,5 +48,6 @@ def settle_rewards(data):
         if token=='player':recalc(data)
         else:recalc_player(data['ally'])
         summary['heroes'].append(dict(token=token,name=member['name'],xp=amount,level_before=before,level_after=character['level'],free_points=gained*4,details=details))
+    roll_battle_loot(data,state,fallen)
     state['settled']=True;data['last_battle_reward']=summary
     return summary

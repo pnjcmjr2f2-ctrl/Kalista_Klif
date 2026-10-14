@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v31 · полный лист игрока
+Калиста Клиф — v32 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
 import streamlit as st
 from kalista_view import editing,gm_view
+from kalista_loot import settings as loot_settings,assign_loot,equip_root_reserve,DEFAULT_CHANCES,WEIGHTS
 import json
 import random
 import os
@@ -719,6 +720,7 @@ def render_movement(data,source_token,target_token,player_mode=False):
 
 
 def render_battle(data):
+    render_loot(data)
     if not data['combat_active'] and data.get('last_battle_reward'):
         reward=data['last_battle_reward']
         with st.expander('Награда за последний бой',expanded=True):
@@ -1216,6 +1218,59 @@ def render_live_battle():
     if latest['combat_log']:st.caption('Последнее: '+latest['combat_log'][0])
 
 
+def render_loot(data):
+    batches=data.get('loot_batches',[])
+    pending=[r for b in batches for r in b['items'] if not r['recipient'] and not r['discarded']]
+    if not pending:
+        if batches:st.caption('Нераспределённой добычи нет')
+        return
+    with st.expander(f'Добыча после боя · предметов: {len(pending)}',expanded=True):
+        st.caption('Предметы сгенерированы по шаблонам. Проверь свойства перед выдачей; снаряжение попадёт в резерв, а не сразу на персонажа.')
+        for record in pending:
+            original=record['item'];prefix='loot_'+record['id']
+            st.markdown('**'+escape(original['name'])+'** · '+rarity_label(original))
+            st.caption('Источник: '+record['enemy']);st.write(original['desc'])
+            with st.form(prefix):
+                item=deepcopy(original)
+                if editing():
+                    item['name']=st.text_input('Название предмета',item['name'])
+                    item['rarity']=st.selectbox('Редкость',RARITIES,index=RARITIES.index(item['rarity']))
+                    item['qty']=st.number_input('Количество',min_value=1,max_value=100,value=item['qty'])
+                    item['desc']=st.text_area('Свойства и описание',item['desc'])
+                    if item.get('gear'):
+                        root_keys={'Броня':'armor','Атака':'attack','Интеллект':'int'}
+                        for key,value in list(item['gear']['ally_bonuses'].items()):
+                            new=st.number_input('Бонус: '+key,min_value=0,value=value)
+                            item['gear']['ally_bonuses'][key]=new
+                            item['gear']['root_bonuses'][root_keys[key]]=new
+                    elif item.get('use'):item['use']['value']=st.number_input('Сила расходника',min_value=1,value=item['use']['value'])
+                recipient=st.selectbox('Получатель',['player','ally'],format_func=lambda t:data['name'] if t=='player' else data['ally']['name'])
+                if st.form_submit_button('Выдать предмет'):
+                    try:
+                        assign_loot(data,record['id'],recipient,item);log('Выдана добыча: '+item['name']);persist_and_rerun('Выдача добычи')
+                    except (ValueError,OSError) as exc:st.error(str(exc))
+            if st.button('Не выдавать',key=prefix+'_discard'):
+                assign_loot(data,record['id'],'discard');persist_and_rerun('Добыча отклонена')
+
+
+def render_loot_settings(data):
+    if not editing():return
+    config=loot_settings(data)
+    with st.expander('Настройки случайной добычи'):
+        with st.form('loot_configuration'):
+            for kind in DEFAULT_CHANCES:
+                st.markdown('**'+kind+' враг**')
+                config['chances'][kind]=st.number_input('Шанс предмета (%)',min_value=0.,max_value=100.,value=float(config['chances'][kind]),key='loot_chance_'+kind)
+                cols=st.columns(5)
+                config['weights'][kind]=[cols[i].number_input(rarity,min_value=0.,value=float(config['weights'][kind][i]),key='loot_weight_'+kind+'_'+rarity) for i,rarity in enumerate(RARITIES)]
+            st.caption('Веса редкости — относительные частоты. Настройки фиксируются на старте нового боя.')
+            if st.form_submit_button('Сохранить добычу'):
+                try:
+                    candidate=deepcopy(data);candidate['loot_settings']=config;loot_settings(candidate)
+                    data['loot_settings']=config;persist_and_rerun('Настройки добычи')
+                except ValueError as exc:st.error(str(exc))
+
+
 def render_backups():
     with st.expander('Снимки сохранений'):
         st.caption('Последние 30 автоматических снимков и до 10 каждого ручного типа. Время в именах — UTC.')
@@ -1293,7 +1348,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 22:
+if data.get("schema_version", 5) < 23:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1375,7 +1430,10 @@ def apply_view_item(item):
 def apply_view_special(key):
     log(activate_special(data,key));persist_and_rerun('Особое умение')
 
-if gm_view(page,data,apply_view_item,apply_view_special):st.stop()
+def apply_view_equip(item_id):
+    equip_root_reserve(data,item_id);persist_and_rerun('Смена снаряжения')
+
+if gm_view(page,data,apply_view_item,apply_view_special,apply_view_equip):st.stop()
 
 # ===================== ОБЗОР =====================
 if page=="Обзор":
@@ -1434,14 +1492,21 @@ elif page=="Отряд":
 
 # ===================== ЭКИПИРОВКА =====================
 elif page=="Ведущий":
+    render_loot_settings(data)
     render_backups()
     with st.container(key="gm_table"):
         render_gm(data)
 
 elif page=="Экипировка":
+    with st.expander("Резерв"):
+        for item in data.get("equipment_reserve",[]):
+            st.write(item["name"]+" · "+rarity_label(item))
+            st.caption(item.get("description",""))
+            if st.button("Надеть",key="edit_root_equip_"+item["id"]):apply_view_equip(item["id"])
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Экипировка</div>", unsafe_allow_html=True)
     for slot,it in data["equipment"].items():
         with st.expander(f"{'🔹' if it.get('name') else '▫️'} {slot.replace(' (посох)','')}: {it.get('name') or '—'}"):
+            it["rarity"]=st.selectbox("Редкость",RARITIES,index=RARITIES.index(it.get("rarity","Обычный")),key=f"rarity_{slot}")
             it["name"]=st.text_input("Название",it.get("name",""),key=f"n{slot}")
             c=st.columns(4)
             it["armor"]=c[0].number_input("Броня",0,value=int(it.get("armor",0)),key=f"a{slot}")
@@ -1525,6 +1590,7 @@ elif page=="Инвентарь":
         with st.container(key=f'inventory_row_gm_{i}'):
             cols=st.columns([3,1,1,1])
             cols[0].write(f"**{it['name']}** · {it['type']}")
+            cols[0].markdown(rarity_badge(it),unsafe_allow_html=True)
             it["qty"]=cols[1].number_input("Количество",0,value=it["qty"],key=f"q{i}",label_visibility="collapsed")
             use = it.get("use")
             if use:
@@ -1537,6 +1603,7 @@ elif page=="Инвентарь":
             if cols[3].button("🗑",key=f"x{i}",help="Удалить предмет"): data["inventory"].pop(i); persist_and_rerun()
         with st.expander(f"Свойства и действие предмета · {it['name']} · #{i + 1}"):
             with st.form(f"item_use_{i}"):
+                item_rarity=st.selectbox("Редкость",RARITIES,index=RARITIES.index(it.get("rarity","Обычный")))
                 options = ["none", "heal", "mana", "shield"]
                 current = use["kind"] if use else "none"
                 kind = st.selectbox("Действие", options, index=options.index(current),
@@ -1544,16 +1611,18 @@ elif page=="Инвентарь":
                 amount = st.number_input("Величина", min_value=0, value=use["value"] if use else 0)
                 duration = st.number_input("Полных раундов (0 — бессрочно)", min_value=0, value=use.get("duration", 0) if use else 0)
                 if st.form_submit_button("Сохранить действие"):
+                    it["rarity"]=item_rarity
                     it["use"] = None if kind == "none" else {"kind": kind, "value": amount, "duration": duration}
                     persist_and_rerun()
     with st.form("ai"):
         st.markdown("**Добавить предмет**")
         nn = st.text_input("Название")
         nt = st.selectbox("Тип", ["Расходник", "Реагент", "Свиток", "Оружие", "Броня", "Реликвия", "Инструмент", "Книга", "Валюта", "Прочее"])
+        nr = st.selectbox("Редкость",RARITIES)
         nq = st.number_input("Количество", min_value=1, value=1)
         nd = st.text_input("Описание")
         if st.form_submit_button("Добавить") and nn.strip():
-            data["inventory"].append({"name": nn.strip(), "type": nt, "qty": int(nq), "desc": nd, "use": None})
+            data["inventory"].append({"name": nn.strip(), "type": nt, "qty": int(nq), "desc": nd, "rarity":nr, "use": None})
             persist_and_rerun()
 
 
