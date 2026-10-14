@@ -8,3 +8,10 @@ THEME=THEME.replace("</style>","""
 @media(max-width:640px){.gear-change{grid-template-columns:1.2fr 1.3fr .8fr;font-size:.75rem}.gear-comparison{padding:.4rem .5rem}}
 </style>
 """)
+
+THEME=THEME.replace("</style>","""
+.focus-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6rem;margin:.25rem 0}.focus-card{background:#241c2c;border:1px solid var(--line);border-radius:12px;padding:.65rem;min-width:0}.focus-card>*{display:block;overflow-wrap:anywhere}.focus-card small{color:#c69ddd;text-transform:uppercase;font-size:.65rem}.focus-card strong{font-size:1rem}.focus-card span{color:var(--muted);font-size:.7rem}.focus-card b{font-size:.8rem;margin-top:.3rem}
+.st-key-movement_controls [data-testid="stHorizontalBlock"]{flex-wrap:nowrap!important;gap:.5rem}.st-key-movement_controls [data-testid="stColumn"]{min-width:0!important;flex:1 1 0!important}
+@media(max-width:640px){.focus-card{padding:.45rem}.focus-card strong{font-size:.85rem}.focus-card span{font-size:.65rem}.st-key-movement_controls button{min-height:44px;width:100%}}
+</style>
+""")

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v36 · полный лист игрока
+Калиста Клиф — v37 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -238,9 +238,9 @@ def remembered_select(label, options, key, default=None, **kwargs):
     candidate = st.session_state.get(key, prefs.get(key, default))
     if candidate not in options:
         candidate = default if default in options else options[0]
-    if st.session_state.get(key) not in options:
-        st.session_state[key] = candidate
-    value = st.selectbox(label, options, key=key, **kwargs)
+    if key in st.session_state and st.session_state[key] not in options:
+        del st.session_state[key]
+    value = st.selectbox(label, options, index=options.index(candidate), key=key, **kwargs)
     prefs[key] = value
     return value
 
@@ -263,7 +263,7 @@ def render_battle_header(data):
             create_snapshot(SAVE_FILE,"before-battle")
             for message in start_combat(data): log(message)
             persist_and_rerun("Начало боя")
-        if b2.button("Завершить ход", disabled=not data["combat_active"] or not data["turn_order"], key="battle_next", use_container_width=True):
+        if b2.button("Конец хода", disabled=not data["combat_active"] or not data["turn_order"], key="battle_next", use_container_width=True):
             for message in advance_turn(data): log(message)
             persist_and_rerun("Следующий ход")
         history = st.session_state.get("_undo_history", [])
@@ -287,7 +287,6 @@ def render_selected_spell(data, target):
     if not data["spells"]:
         st.info("Заклинаний пока нет. Добавь их на странице «Заклинания».")
         return
-    st.caption("⚔ Ближняя: только рядом. 🏹 Дальняя: при враге рядом шанс промаха 50%. ⚔ 🏹 Любая: обе дистанции без штрафа.")
     spells = {spell["id"]: spell for spell in data["spells"]}
     sid = remembered_select("Способность", list(spells), "battle_spell", default=data["spells"][0]["id"],
                             format_func=lambda value: f"{spells[value]['name']} · {reach_label(spells[value])} · {spells[value]['mana']} MP" +
@@ -296,7 +295,7 @@ def render_selected_spell(data, target):
     action = spell_action(spell)
     dual, soul = spell_bonuses(data, spell)
     raw = spell_raw(spell["base"], data.get("spell_power", 0), dual, soul) if action == "damage" else spell.get("effect_value", 0)
-    st.caption(f"{spell.get('desc', '')} · Мана {spell['mana']} · КД {spell.get('cd_left', 0)}/{spell.get('cd_max', 0)}")
+    st.caption(f"Мана {spell['mana']} · КД {spell.get('cd_left', 0)}/{spell.get('cd_max', 0)}")
     bonuses = (["Двойное пламя +5%"] if dual else []) + (["Ритуал +40%"] if soul else [])
     if bonuses: st.caption("Прямой урон: " + " · ".join(bonuses))
     if action == "damage": st.caption(f"Шанс крита: {effective_crit_chance(data)*100:.1f}%")
@@ -310,12 +309,13 @@ def render_selected_spell(data, target):
     override = False
     final_damage = 0
     if action == "damage":
-        with st.expander("Крит и ручной урон" if editing() else "Критический удар", expanded=False):
-            st.caption("Крит определяется автоматически по формуле при попадании.")
-            override = st.checkbox("Назначить итоговый урон вручную", key="battle_override") if editing() else False
-            if editing():
-                final_damage = st.number_input("Готовый урон (щит будет учтён)", min_value=0, value=0,
-                                               disabled=not override, key="battle_final_damage")
+        if editing():
+            with st.expander("Крит и ручной урон" if editing() else "Критический удар", expanded=False):
+                st.caption("Крит определяется автоматически по формуле при попадании.")
+                override = st.checkbox("Назначить итоговый урон вручную", key="battle_override") if editing() else False
+                if editing():
+                    final_damage = st.number_input("Готовый урон (щит будет учтён)", min_value=0, value=0,
+                                                   disabled=not override, key="battle_final_damage")
 
         target_token=next((t for t,v in participants(data) if v is target),None)
         if target_token:
@@ -325,13 +325,18 @@ def render_selected_spell(data, target):
         preview_raw = raw
         if raw > 0:
             preview = spell_damage_preview(data,spell,target,preview_raw,final_damage if override else None)
-            st.info(damage_message(target["name"], preview) + (" · обычное попадание; крит рассчитывается автоматически" if not override else ""))
+            st.info(f"{target['name']}: −{preview['hp_loss']} HP · щит поглотит {preview['absorbed']}" + (" · без учёта крита" if not override else ""))
+            with st.expander("Расчёт урона"):
+                st.caption(damage_message(target["name"],preview))
             if target is data['ally'] or target is data:
                 st.warning('Выбрана дружественная цель: заклинание нанесёт ей урон.')
-        if 'Огонь' in spell['school']:st.caption(f"Горение: шанс 50% · {kalista_dot_damage(data,'burn')} Огнём × 3 хода цели; сила фиксируется при наложении")
-        if 'Тьма' in spell['school']:st.caption(f"Проклятие: шанс 50% · {kalista_dot_damage(data,'curse')} Тьмой × 3 хода; слабость: шанс 35% · −35% физического урона на 2 хода")
-        if spell['name'] in ('Разряд бездны','Пламя души'):st.caption('Страх: шанс 50% × (1 − сопротивление контролю) · пропуск 2 ходов цели')
-        if spell['school']=='Огонь+Тьма':st.caption('Прямой урон: 50% Огнём и 50% Тьмой; эффекты проверяются независимо.')
+        with st.expander('Правила и эффекты способности'):
+            st.caption(spell.get('desc',''))
+            st.caption('Ближняя: только рядом. Дальняя: при враге рядом шанс промаха 50%. Любая: без штрафа дистанции.')
+            if 'Огонь' in spell['school']:st.caption(f"Горение: шанс 50% · {kalista_dot_damage(data,'burn')} Огнём × 3 хода цели; сила фиксируется при наложении")
+            if 'Тьма' in spell['school']:st.caption(f"Проклятие: шанс 50% · {kalista_dot_damage(data,'curse')} Тьмой × 3 хода; слабость: шанс 35% · −35% физического урона на 2 хода")
+            if spell['name'] in ('Разряд бездны','Пламя души'):st.caption('Страх: шанс 50% × (1 − сопротивление контролю) · пропуск 2 ходов цели')
+            if spell['school']=='Огонь+Тьма':st.caption('Прямой урон: 50% Огнём и 50% Тьмой; эффекты проверяются независимо.')
     elif action == "heal":
         hp_key, maximum_key = hp_fields(target)
         st.info(f"{target['name']}: восстановится {min(raw, max(0, target[maximum_key] - target[hp_key]))} HP")
@@ -581,6 +586,25 @@ def render_party(data):
         render_participant_editor(data, 'ally')
 
 
+def render_focus_cards(data,source_token,target_token):
+    cards=[]
+    for token,title in ((source_token,'Действует'),(target_token,'Цель')):
+        target=participant(data,token);hp,maximum=hp_fields(target)
+        shield=sum(x['value'] for x in target.get('effects',[]) if x['kind']=='shield')
+        profile=target.get('sheet_profile',{})
+        level=target.get('level',profile.get('level'))
+        identity=' · '.join(str(x) for x in (target.get('race',profile.get('race','')),target.get('class',profile.get('class','')),'Ур. '+str(level) if level else '') if x)
+        ratio=max(0,min(100,100*target[hp]/max(1,target[maximum])))
+        resource=f" · MP {target['mana_current']}/{target['mana_max']}" if 'mana_current' in target else ''
+        effects=len(target.get('effects',[]))
+        statuses=[x['name']+(f" ({x['duration']})" if x.get('duration') else '') for x in target.get('effects',[])][:2]
+        if target.get('eye_damage_boost'):statuses.insert(0,'Десница ×2')
+        if target.get('defensive_stance'):statuses.insert(0,'Стойка −30%')
+        status=escape(' · '.join(statuses))
+        cards.append(f'<div class="focus-card"><small>{title}</small><strong>{escape(target["name"])}</strong><span>{escape(identity or combat_side(data,token))}</span><b>HP {target[hp]}/{target[maximum]}</b><div class="combat-health"><div style="width:{ratio:g}%"></div></div><span>Щит {shield}{resource} · эффектов {effects}</span><span>{status}</span></div>')
+    st.markdown('<div class="focus-cards">'+''.join(cards)+'</div>',unsafe_allow_html=True)
+
+
 def render_combatant_card(data, token, title, active=False):
     target = participant(data, token)
     hp_key, maximum_key = hp_fields(target)
@@ -704,13 +728,13 @@ def render_movement(data,source_token,target_token,player_mode=False):
     source=participant(data,source_token)
     if data['combat_active']:
         used=sum(x['source']==source_token and x.get('counts',True) for x in data.get('turn_actions',[]))
-        st.info(f'Действия: {max(0,2-used)}/2 · Перемещение: '+('использовано' if source.get('movement_used') else 'доступно'))
+        st.caption(f'Действия: {max(0,2-used)}/2 · Перемещение: '+('использовано' if source.get('movement_used') else 'доступно'))
     st.caption('Дистанция до цели: '+distance_between(data,source_token,target_token))
-    with st.expander('Перемещение (1 за ход)'):
+    with st.container(key='movement_controls'):
         cols=st.columns(2)
         for index,rule in enumerate(('move_close','move_far')):
             action=next((a for a in source.get('actions',[]) if a.get('rule')==rule),None)
-            if action and cols[index].button(action['name'],key=f'move_{source_token}_{rule}',disabled=source_token==target_token or (data['combat_active'] and source.get('movement_used',False))):
+            if action and cols[index].button(action['name'],key=f'move_{source_token}_{rule}',disabled=source_token==target_token or source[hp_fields(source)[0]]<=0 or any(x['kind']=='fear' for x in source.get('effects',[])) or (data['combat_active'] and source.get('movement_used',False))):
                 try:
                     if player_mode:submit_player_action(data,action['id'],[target_token],False);st.success('Перемещение предложено ведущему')
                     else:
@@ -722,7 +746,6 @@ def render_movement(data,source_token,target_token,player_mode=False):
 def render_battle(data):
     render_loot(data)
     render_battle_header(data)
-    render_turn_context(data)
     section = st.session_state["battle_section"]
     current = get_current_actor(data) if data["combat_active"] else None
     active_token = actor_token(current) if current else None
@@ -742,19 +765,18 @@ def render_battle(data):
             active_token = remembered_select("Кто действует", tokens, "battle_manual_actor", default="player",
                                              format_func=lambda value: participant_label(data, value))
         default = default_opponent(data, active_token)
-        with st.container(key="turn_cards"):
-            acting_column, target_column = st.columns(2)
-            with acting_column:
-                render_combatant_card(data, active_token, "Сейчас ходит" if current else "Действие вне боя", active=True)
-            with target_column:
-                token = remembered_select("Цель действия", tokens, f"turn_target_{active_token}", default=default,
-                                          format_func=lambda value: participant_label(data, value))
-                render_combatant_card(data, token, "Цель")
+        token = remembered_select("Цель действия", tokens, f"turn_target_{active_token}", default=default,
+                                  format_func=lambda value: participant_label(data, value))
+        render_focus_cards(data,active_token,token)
         render_movement(data,active_token,token)
         if active_token == "player": render_selected_spell(data, participant(data, token))
         else:
             with st.container(key="turn_action"):
                 render_combatant_action(data, active_token, token)
+        render_turn_context(data)
+        with st.expander("Подробнее об участнике и цели"):
+            render_combatant_card(data,active_token,"Действует",active=True)
+            render_combatant_card(data,token,"Цель")
         if data["combat_log"]: st.caption("Последнее: " + data["combat_log"][0])
         return
     default = active_token or "player"
@@ -965,7 +987,7 @@ def render_turn_context(data):
         st.caption('Очередь: ' + ' → '.join(participant_label(data,actor_token(actor)) for actor in upcoming))
     entries=data.get('turn_actions', [])
     reactions=sum(not entry.get('counts',True) for entry in entries)
-    with st.expander(f'Этот ход · действий: {len(entries)-reactions} · реакций и усилений: {reactions}', expanded=bool(entries)):
+    with st.expander(f'Этот ход · действий: {len(entries)-reactions} · реакций и усилений: {reactions}', expanded=False):
         if not entries: st.caption('Действия ещё не применялись. Доступны два действия и одно перемещение.')
         for entry in entries[-5:]: st.write(f"**{entry['name']} → {entry['target']}** · {entry['result']}")
     st.caption('Два действия и одно перемещение за ход.')
@@ -982,25 +1004,27 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
         return
     aid=remembered_select('Действие', list(actions), f'action_choice_{source_token}', format_func=lambda value: actions[value]['name']+' · '+reach_label(actions[value]))
     action=actions[aid]
-    st.caption(action['description'])
     if action['needs_setup']: st.warning('Для этого действия ведущему нужно задать боевые числа и подтвердить правила в редакторе действий.')
     critical=False
     if action['kind']=='damage' and action['shared_attack'] and source.get('sheet_profile'):
-        st.caption(f"Автоматический крит: {source['sheet_profile']['critical_chance']:g}% · проверка отдельно для каждого попадания")
+        crit_hint=f" · автоматический крит {source['sheet_profile']['critical_chance']:g}%"
+    else:crit_hint=''
     amount=action_amount(source,action,critical)
     if critical: st.info(f'Критический урон: {amount} за попадание. Обычный урон сейчас не используется.')
-    else: st.caption(f'Величина: {amount} · Попаданий: {action["hits"]} · Тип: {action["damage_type"]}')
+    else: st.caption(f'{amount} × {action["hits"]} · {action["damage_type"]}'+crit_hint)
     target_key=f'action_targets_{source_token}_{aid}'
     anchor_key=f'_action_target_anchor_{source_token}_{aid}'
     if action.get('rule') in ('eye','stance'):victim_token=source_token
     initial=[victim_token] if action['kind']!='damage' or combat_side(data,victim_token)=='Враг' or combat_side(data,source_token)=='Враг' else []
-    if not player_mode and st.session_state.get(anchor_key)!=victim_token:
+    if st.session_state.get(anchor_key)!=victim_token:
         st.session_state[target_key]=[victim_token]
         st.session_state[anchor_key]=victim_token
     valid_tokens=[t for t,_ in visible_battle_participants(data)]
     if target_key in st.session_state:
         st.session_state[target_key]=[t for t in st.session_state[target_key] if t in valid_tokens]
-    victims=st.multiselect('Цели',valid_tokens, default=initial if target_key not in st.session_state else None, format_func=lambda token: participant_label(data,token), key=target_key,placeholder='Выбери цели')
+    with st.expander('Несколько целей / изменить цели'):
+        victims=st.multiselect('Цели',valid_tokens, default=initial if target_key not in st.session_state else None, format_func=lambda token: participant_label(data,token), key=target_key,placeholder='Выбери цели')
+    st.caption('Применится к: '+(', '.join(participant(data,t)['name'] for t in victims) or 'цель не выбрана'))
     if action['kind']=='damage' and any(combat_side(data,t) in ('Героиня','Союзник') for t in victims) and combat_side(data,source_token)!='Враг':
         st.warning('Выбрана дружественная цель: действие нанесёт ей урон.')
     reaction=action.get('reaction',action['name']=='Совершенная контратака')
@@ -1055,6 +1079,8 @@ def render_action_panel(data, source_token, victim_token, player_mode=False):
                 for message in perform_action(data,source_token,aid,victims,critical,reaction,manual_amount): log(message)
                 persist_and_rerun('Действие: '+action['name'])
         except (ValueError, OSError) as exc: st.error(str(exc))
+    with st.expander('Описание способности'):
+        st.caption(action['description'])
 
 
 def render_action_editor(data,token):
@@ -1205,10 +1231,8 @@ def render_live_battle():
             token=actor_token(actor);target=participant(latest,token)
             used=sum(x['source']==token and x.get('counts',True) for x in latest['turn_actions'])
             st.caption(f"Действия {max(0,2-used)}/2 · Перемещение: {'использовано' if target.get('movement_used') else 'доступно'}")
-    cols=st.columns(2)
-    cols[0].metric(latest['name']+' · HP',f"{latest['hp_current']}/{latest['hp_max']}")
-    cols[1].metric(latest['ally']['name']+' · HP',f"{latest['ally']['hp']}/{latest['ally']['hp_max']}")
-    if latest['combat_log']:st.caption('Последнее: '+latest['combat_log'][0])
+    st.caption(f"{latest['name']}: {latest['hp_current']}/{latest['hp_max']} HP · {latest['ally']['name']}: {latest['ally']['hp']}/{latest['ally']['hp_max']} HP")
+
 
 
 def render_loot(data):
@@ -1217,7 +1241,7 @@ def render_loot(data):
     reward=data.get('last_battle_reward') if not data['combat_active'] else None
     if not pending and not reward:return
     title='Итоги последнего боя' if reward else f'Добыча · ожидает выдачи: {len(pending)}'
-    with st.expander(title,expanded=True):
+    with st.expander(title,expanded=not data['combat_active']):
         if reward:
             st.markdown('**Опыт уже начислен**')
             for hero in reward['heroes']:
@@ -1326,22 +1350,28 @@ def render_player():
     latest,revision=read_state(SAVE_FILE)
     data=migrate(latest if latest is not None else deepcopy(DEFAULT))
     public=public_player_state(data)
-    st.markdown("<div class='main-title'>"+escape(public['ally']['name'])+'</div>',unsafe_allow_html=True)
     profile=public['ally'].get('sheet_profile')
-    st.caption('Игрок · '+(profile['race']+' · '+profile['class'] if profile else 'Союзник'))
+    if st.session_state.get('player_section')!='Бой':
+        st.markdown("<div class='main-title'>"+escape(public['ally']['name'])+'</div>',unsafe_allow_html=True)
+        st.caption('Игрок · '+(profile['race']+' · '+profile['class'] if profile else 'Союзник'))
     if public['combat_active']:
         current=public['turn_order'][public['current_turn']] if public['turn_order'] else None
         st.info(f"Раунд {public['round']} · Ход: {current['name'] if current else 'нет участников'}")
     section=st.session_state.get('player_section','Обзор')
-    if section in ('Обзор','Бой'):render_combatant_card(data,'ally','Твой персонаж',active=True)
-    else:st.caption(section+' · HP '+str(public['ally']['hp'])+'/'+str(public['ally']['hp_max']))
+    if section=='Обзор':render_combatant_card(data,'ally','Твой персонаж',active=True)
+    elif section!='Бой':st.caption(section+' · HP '+str(public['ally']['hp'])+'/'+str(public['ally']['hp_max']))
     if section=='Бой':
         if not data['combat_active'] and data.get('last_battle_reward'):
             hero=next((x for x in data['last_battle_reward']['heroes'] if x['token']=='ally'),None)
             if hero:st.success(f"Награда за бой: +{hero['xp']} XP · уровень {hero['level_after']}"+(f" · +{hero['free_points']} свободных очков" if hero['free_points'] else ''))
-        target=default_opponent(data,'ally')
+        tokens=[token for token,_ in visible_battle_participants(data)]
+        target=remembered_select('Цель действия',tokens,'player_battle_target',default=default_opponent(data,'ally'),format_func=lambda t:participant_label(data,t))
+        render_focus_cards(data,'ally',target)
         render_movement(data,'ally',target,player_mode=True)
         render_action_panel(data,'ally',target,player_mode=True)
+        with st.expander('Подробнее об участнике и цели'):
+            render_combatant_card(data,'ally','Твой персонаж',active=True)
+            render_combatant_card(data,target,'Цель')
         for request in public['requests'][-3:]: st.caption(request['action_name']+' · '+request['message'])
     elif section=='Сцена':
         if public['scene']: st.markdown(public['scene'])
@@ -1514,8 +1544,9 @@ if page=="Обзор":
 
 # ===================== БОЙ =====================
 elif page=="Бой":
-    render_live_battle()
     render_battle(data)
+    with st.expander("Состояние стола · автообновление"):
+        render_live_battle()
 
 elif page=="Отряд":
     render_party(data)
