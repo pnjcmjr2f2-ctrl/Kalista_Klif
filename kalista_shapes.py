@@ -25,6 +25,8 @@ def check_area_aim(data,source,ability,aim):
     if ability.get('area_shape','circle')=='cone':
         if math.dist(data['positions'][source],aim)<=1e-9:raise ValueError('Укажи направление от атакующего: выбери другую точку')
         return aim
+    from kalista_obstacles import check_path
+    check_path(data,data["positions"][source],aim)
     return check_point_range(data,source,ability,aim)
 
 def in_cone(origin,aim,target,length,angle):
@@ -42,8 +44,9 @@ def in_cone(origin,aim,target,length,angle):
 def shape_targets(data,source,ability,aim):
     from kalista_engine import participants,hp_fields
     aim=check_area_aim(data,source,ability,aim)
-    if ability.get('area_shape','circle')!='cone':return area_targets(data,aim,ability['area_radius_m'])
-    return [t for t,a in participants(data) if t!=source and a[hp_fields(a)[0]]>0 and in_cone(data['positions'][source],aim,data['positions'][t],ability['cone_length_m'],ability['cone_angle_deg'])]
+    from kalista_obstacles import blocking_wall
+    if ability.get('area_shape','circle')!='cone':return [t for t in area_targets(data,aim,ability['area_radius_m']) if not blocking_wall(data,aim,data['positions'][t])]
+    return [t for t,a in participants(data) if t!=source and a[hp_fields(a)[0]]>0 and in_cone(data['positions'][source],aim,data['positions'][t],ability['cone_length_m'],ability['cone_angle_deg']) and not blocking_wall(data,data['positions'][source],data['positions'][t])]
 
 def area_label(ability):
     if ability.get('area_shape','circle')=='cone':return f"Конус · длина {ability['cone_length_m']:g} м · угол {ability['cone_angle_deg']:g}°"

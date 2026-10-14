@@ -166,7 +166,7 @@ def player_view(section,data,root,commit):
     else:return False
     return True
 
-def gm_view(page,data,apply_item,apply_special=None,apply_equip=None):
+def gm_view(page,data,apply_item,apply_special=None,apply_equip=None,persist=None):
     if editing() or page not in ('Экипировка','Инвентарь','Характеристики','Заклинания','Квесты','Ведущий'):return False
     st.subheader(page)
     selected=st.selectbox('Редкость предметов',['Все']+list(e.RARITIES),key='root_view_rarity_'+page) if page in ('Экипировка','Инвентарь') else 'Все'
@@ -217,6 +217,12 @@ def gm_view(page,data,apply_item,apply_special=None,apply_equip=None):
                     for key in ('desc','tasks','notes','reward','rewards','description'):
                         if x.get(key):show_text_value(x[key])
     elif page=='Ведущий':
+        section=st.radio('Раздел ведущего',['Сцены','NPC','Карты','Записная книжка'],key='gm_section',horizontal=True,label_visibility='collapsed')
+        if section=='Карты':
+            from kalista_map_library_ui import render_map_hub
+            render_map_hub(data,persist);return True
+        from kalista_map_library_ui import render_scene_map
+        render_scene_map(data,'gm_scene_location')
         for x in data.get('scenes',[]):
             with st.expander(x['name']+' · '+x['status']):st.write(x.get('summary',''));st.write(x.get('gm_notes',''))
         with st.expander('NPC'):

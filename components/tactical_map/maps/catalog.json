@@ -1,0 +1,423 @@
+[
+  {
+    "id": "5c8c922b107d917c",
+    "name": "Зал ритуала",
+    "file": "5c8c922b107d917c.webp",
+    "width": 2400,
+    "height": 1800,
+    "original_width": 2560,
+    "original_height": 1920,
+    "source": "ajdpYX4J6Gj9mysRimEPXxRbVHYECB9EarOi2Qm_k-MrXhofxzOjjOyEnR42LxIA2EC2TBJWkn4GZKVRzM2r_QJd.jpg"
+  },
+  {
+    "id": "ac3209b25d24bfba",
+    "name": "Подземная таверна",
+    "file": "ac3209b25d24bfba.webp",
+    "width": 2400,
+    "height": 1800,
+    "original_width": 2560,
+    "original_height": 1920,
+    "source": "EB9x5ufkaaPru_Jqyia8QKWDLcA2Neglx7S12yt6eZon90i8_KhFKhl2gZEXRFKhOrfpntLPQoKhT4SMhnClcd3FUIMwFw.jpg"
+  },
+  {
+    "id": "ae135a67d098e61a",
+    "name": "Лесная таверна",
+    "file": "ae135a67d098e61a.webp",
+    "width": 2400,
+    "height": 1879,
+    "original_width": 2560,
+    "original_height": 2004,
+    "source": "67uifGFaaUBRN4ipDKrUfFA2E3rF-uMB3b1SYAeuzevbu9CAovYEQ4y2el49hNgUVo7twaJK-P0tZ5GOwJwug2zX.jpg"
+  },
+  {
+    "id": "549dc901ad45394f",
+    "name": "Городская таверна",
+    "file": "549dc901ad45394f.webp",
+    "width": 2400,
+    "height": 1800,
+    "original_width": 2560,
+    "original_height": 1920,
+    "source": "xIupeApl_yfXGKGz9Q-gjeLOXYq5I1ivJAKjddTyKzU8ncRq37fnuNPM_e4I6Rd5A85BkLAOlm_DtCPYu3bYWnL5c2TLpA.jpg"
+  },
+  {
+    "id": "e69db6aafab2a4ba",
+    "name": "Таверна у дороги",
+    "file": "e69db6aafab2a4ba.webp",
+    "width": 2400,
+    "height": 2400,
+    "original_width": 2560,
+    "original_height": 2560,
+    "source": "EfW3-tWmcNtrMCeaY_yNlqKLumPVVnMINRr1noB3doeKAkpaDKYpRbEz2F4d4zCI6-RwOjoecSVTGNfa20FGw4B6A-iA3w.jpg"
+  },
+  {
+    "id": "181b27a45e27d63e",
+    "name": "Алхимическая лаборатория",
+    "file": "181b27a45e27d63e.webp",
+    "width": 2048,
+    "height": 1390,
+    "original_width": 2048,
+    "original_height": 1390,
+    "source": "K0gI2Cs3SM3ndjuVBZT_gJjb-fbh3TTtbc4BhUBZgpKzEeEFJR0yXO0XYy6d8Muy3eLv4Pe4z9aD2pUvbQ_ayK0DgZQV9Q.jpg"
+  },
+  {
+    "id": "365f2a59092a98e1",
+    "name": "Заброшенная лаборатория",
+    "file": "365f2a59092a98e1.webp",
+    "width": 2048,
+    "height": 1229,
+    "original_width": 2048,
+    "original_height": 1229,
+    "source": "Kg2icGbbCwFLflYNIy2THlBdP3QFuSZ_Gq7LvXbQfu8TdNJrvbsjgUFFV5OT-Gnyf-Oqnhko8nk8AUXxim_4mTnu.jpg"
+  },
+  {
+    "id": "e632e2f968df47e6",
+    "name": "Подземные комнаты",
+    "file": "e632e2f968df47e6.webp",
+    "width": 2400,
+    "height": 2400,
+    "original_width": 2560,
+    "original_height": 2560,
+    "source": "NZEOWS7k_sedEXuyIA8P501MIpBkRhZ6BF1mf29kLYX1z30GHA7qQDDIIVRi7Pl-Y6N4QIZjEJJ1xu3cJPVrEoYpWNhxFg.jpg"
+  },
+  {
+    "id": "eaa1e1d0776af3c5",
+    "name": "Улица и крыши · 22×32",
+    "file": "eaa1e1d0776af3c5.webp",
+    "width": 1650,
+    "height": 2400,
+    "original_width": 2200,
+    "original_height": 3200,
+    "source": "Ulitsa_i_kryshi_domov_22x32.jpg"
+  },
+  {
+    "id": "8e65306ab569873c",
+    "name": "Арена",
+    "file": "8e65306ab569873c.webp",
+    "width": 1925,
+    "height": 1400,
+    "original_width": 1925,
+    "original_height": 1400,
+    "source": "CDMPd0QMQsPkcy2-DE54gt9FX9g_5MqzYHrg1QRc402-t0eTnSS2hgtu6JuaWhkh14qiH5ogxD_1Y96rKKfDuEsBYvpG1g.jpg"
+  },
+  {
+    "id": "dcbdd15b49ed9a3e",
+    "name": "Ферма и поля",
+    "file": "dcbdd15b49ed9a3e.webp",
+    "width": 2048,
+    "height": 1536,
+    "original_width": 2048,
+    "original_height": 1536,
+    "source": "GdLLfwznop9Tny0KZ3LMxDReexk1cax6Oy1iHUoJTrnEfpAn-OU0c7f-EiZjsY8_TW7w_zN9EFs9mWXhhXVkcst8AEDhqA.jpg"
+  },
+  {
+    "id": "3fe14ad3206f6c2d",
+    "name": "Прибрежная деревня",
+    "file": "3fe14ad3206f6c2d.webp",
+    "width": 2400,
+    "height": 2400,
+    "original_width": 2560,
+    "original_height": 2560,
+    "source": "PNmOMJ0IAexhSKhNkgepjC59yQ11zNN1L-hciLLFH5_QzF0xEEtQR8Kf2B5qhA0oCrVXyj2rMWkvyhbAQWZVnPi-.jpg"
+  },
+  {
+    "id": "5834a69f40796030",
+    "name": "Деревня у леса",
+    "file": "5834a69f40796030.webp",
+    "width": 2400,
+    "height": 1823,
+    "original_width": 2560,
+    "original_height": 1945,
+    "source": "uOENmvvSlnVED7tt-CJcJjOJcn5-GHLr88IHhoOYj6IxDH_YlLGb-a0Hz9MJGDA6y3u_Vj1rjqrD824vgWwluOaE8js23g.jpg"
+  },
+  {
+    "id": "e49d7e454d8f4ff2",
+    "name": "Порт",
+    "file": "e49d7e454d8f4ff2.webp",
+    "width": 2048,
+    "height": 1639,
+    "original_width": 2048,
+    "original_height": 1639,
+    "source": "TZNxCCdwEt7nHB4fGwZ5qDRMjXey0eNFBg6FTEEN7kEZoGK_9KFPqYh7GjyB0ZMEJiSW6R_o5Wom8mBT1I9_183KRir0BQ.jpg"
+  },
+  {
+    "id": "691108244bebc34d",
+    "name": "Огненная кузница",
+    "file": "691108244bebc34d.webp",
+    "width": 2048,
+    "height": 1536,
+    "original_width": 2048,
+    "original_height": 1536,
+    "source": "lJ5-fgi_-o7K6pofs8L003-uJdK33n9lq4aMjE9qRVfCl3-DnQU1NP8CF7qwEE9V5pPcEar-M3i9clrz0snN1xnxJ18gUw.jpg"
+  },
+  {
+    "id": "6f91b8e41c803e22",
+    "name": "Подземный комплекс",
+    "file": "6f91b8e41c803e22.webp",
+    "width": 982,
+    "height": 940,
+    "original_width": 982,
+    "original_height": 940,
+    "source": "Gto42v5j-1w9_29RlcWP9jI9Dsii5HfLmpinHxs6EeqS3lQ_-UIGqoQ_OGRJpon8bzMLNhz4bhGu3Mf8q708_Klv.jpg"
+  },
+  {
+    "id": "dfa7e360db1405ef",
+    "name": "Лесной дом",
+    "file": "dfa7e360db1405ef.webp",
+    "width": 2048,
+    "height": 2048,
+    "original_width": 2048,
+    "original_height": 2048,
+    "source": "F-obUMGEj1xDTXHnv9JfXQPaLt4yPoNqvpiRVhh1U8BvNaQQGtEtXEYg6tR0LptFcxnRnG_y24-Qr-n9b53_eK9E.jpg"
+  },
+  {
+    "id": "ef56cb5566355ee7",
+    "name": "Дом у тропы",
+    "file": "ef56cb5566355ee7.webp",
+    "width": 1024,
+    "height": 1024,
+    "original_width": 1024,
+    "original_height": 1024,
+    "source": "--qxJ_HjDMg96-fVQgMEY4XcGbTT4HLltM4n0zkijZwnKM4sxXFCreeKV7MncwyuAl87sh-lLWdV4lzOvxLztxT9.jpg"
+  },
+  {
+    "id": "47b3ad87bfa4eb1d",
+    "name": "Дом у водопада",
+    "file": "47b3ad87bfa4eb1d.webp",
+    "width": 1200,
+    "height": 2400,
+    "original_width": 1280,
+    "original_height": 2560,
+    "source": "SqPCtOoB78oNrFH1KT8XI6FrjWIoHxTIBUAXVtxBQA1J_GVPNIBqlotxghk8EI2qLT8TypNstsETjRp78pl4NALY.jpg"
+  },
+  {
+    "id": "6b0d73ba27151301",
+    "name": "Ледяное святилище",
+    "file": "6b0d73ba27151301.webp",
+    "width": 1920,
+    "height": 2049,
+    "original_width": 1920,
+    "original_height": 2049,
+    "source": "KAGJz6_r5n_HIIQzS40JZZgrxuEvnhy0aijd5ul5z3fvsMhuspcnbpC9alGDioTlK3cYm_8yMj2dqUWKhquM5G78L5b5lw.jpg"
+  },
+  {
+    "id": "7b5ba7a27fd97ce1",
+    "name": "Крепость Blackdagger",
+    "file": "7b5ba7a27fd97ce1.webp",
+    "width": 1685,
+    "height": 2400,
+    "original_width": 2876,
+    "original_height": 4096,
+    "source": "Blackdagger_Keep.jpg"
+  },
+  {
+    "id": "a45c86a0ff569c6b",
+    "name": "Шахта Bellhammer",
+    "file": "a45c86a0ff569c6b.webp",
+    "width": 2400,
+    "height": 1886,
+    "original_width": 7000,
+    "original_height": 5500,
+    "source": "Bellhammer_Mine.jpg"
+  },
+  {
+    "id": "11b7f9fcf4d87501",
+    "name": "Убежище в канализации",
+    "file": "11b7f9fcf4d87501.webp",
+    "width": 2400,
+    "height": 2400,
+    "original_width": 7000,
+    "original_height": 7000,
+    "source": "Sewer_Hideout.jpg"
+  },
+  {
+    "id": "b446d1f21f939c7c",
+    "name": "Святилище · 40×35",
+    "file": "b446d1f21f939c7c.webp",
+    "width": 2048,
+    "height": 1792,
+    "original_width": 2048,
+    "original_height": 1792,
+    "source": "Svyatilische_40kh35.jpg"
+  },
+  {
+    "id": "b7b11100632b934a",
+    "name": "Гостиница · 22×17",
+    "file": "b7b11100632b934a.webp",
+    "width": 2400,
+    "height": 1800,
+    "original_width": 4096,
+    "original_height": 3072,
+    "source": "Gostinitsa_Stary_zapad_22x17.jpg"
+  },
+  {
+    "id": "4263161aaf84abc7",
+    "name": "Gullrun",
+    "file": "4263161aaf84abc7.webp",
+    "width": 2400,
+    "height": 2400,
+    "original_width": 4000,
+    "original_height": 4000,
+    "source": "Gullrun.png"
+  },
+  {
+    "id": "ebed45dbbc6c36e6",
+    "name": "Руины замка",
+    "file": "ebed45dbbc6c36e6.webp",
+    "width": 1200,
+    "height": 836,
+    "original_width": 1200,
+    "original_height": 836,
+    "source": "slgwNWkL_lbPSiQ8mxuOz_rr-Iamqe74zY-mhykA0BtPQIoQAlKK_kqwyEp_Xe_-MzQrydmQoBz9wj_-oELYsBK8.jpg"
+  },
+  {
+    "id": "99410e621e4cb525",
+    "name": "Храм на острове",
+    "file": "99410e621e4cb525.webp",
+    "width": 1080,
+    "height": 1423,
+    "original_width": 1080,
+    "original_height": 1423,
+    "source": "w1ZOCFCSJ-HZJwvCalEXeGLlgIu05dePGyKedfgsV_MfwpVlee4oT7Wwxj_y7zR6C7QLzUcB3O4NFykRUKpRBPhX.jpg"
+  },
+  {
+    "id": "26af92bafb17ce2f",
+    "name": "Зимняя деревня",
+    "file": "26af92bafb17ce2f.webp",
+    "width": 1800,
+    "height": 2400,
+    "original_width": 1920,
+    "original_height": 2560,
+    "source": "91Dobe0098XmiBczLD5NQIgohhWP3xGoDMy0dtEhXh_scel62Ln-gFxI_Cxqm40Zx1ApScq-1F6I31SiuP9BXc5qP1smDw.jpg"
+  },
+  {
+    "id": "1656c2e41fa095e2",
+    "name": "Ледяное подземелье I",
+    "file": "1656c2e41fa095e2.webp",
+    "width": 2400,
+    "height": 2130,
+    "original_width": 2560,
+    "original_height": 2272,
+    "source": "pL_uFB8Tbh2CXEAH9jjoYMOqO9yVE2eQzzT7LQ2QJOqk1rUZHtSxaEaKkFnHC6CVyACYtsYLvx9EtG0G-IyPZnReS5KvEQ.jpg"
+  },
+  {
+    "id": "de890b8206380f12",
+    "name": "Ледяное подземелье II",
+    "file": "de890b8206380f12.webp",
+    "width": 2400,
+    "height": 2342,
+    "original_width": 2560,
+    "original_height": 2498,
+    "source": "L0iZ-MAan_QgvWSyYVlLUuPt-4S4hRdgBRRmomypHgYHoyUCbjDKpRoaGK8C_maG-lOFPXRwPXvFklQQrbERXTr5ReWlfw.jpg"
+  },
+  {
+    "id": "de278c628faf7ad1",
+    "name": "Пещеры",
+    "file": "de278c628faf7ad1.webp",
+    "width": 2048,
+    "height": 1446,
+    "original_width": 2048,
+    "original_height": 1446,
+    "source": "X_vekmyuyWOt2pPuchevo897F4J2rCdtpJ2S2olrWfouWeB1yYH0jfevnGz0odV8P0gKMnwdP2NV2ly9XLXbZvkoHkxBxg.jpg"
+  },
+  {
+    "id": "2d405a5fb51ebdb0",
+    "name": "Городские кварталы",
+    "file": "2d405a5fb51ebdb0.webp",
+    "width": 1600,
+    "height": 2400,
+    "original_width": 1707,
+    "original_height": 2560,
+    "source": "izG3qsjzuIRDtYDo5AjgrLd4WlTS4X80Hys8-ue4fKpWVrwZ8uLeJzSM5hreInY8ePuQAn5_9kxbgfwS7yZ2tIn0.jpg"
+  },
+  {
+    "id": "fm_c44b0a6da71a",
+    "name": "Город у воды",
+    "width": 2400,
+    "height": 1553,
+    "category": "Город",
+    "author": "Jonathan Roberts",
+    "source_url": "https://www.fantasticmaps.com/free-stuff/",
+    "license": "CC BY-NC-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/",
+    "changes": "Пропорциональное уменьшение, WebP. Игровой масштаб не назначен.",
+    "file": "fm_c44b0a6da71a.webp"
+  },
+  {
+    "id": "fm_dd7cfead8805",
+    "name": "Архипелаг",
+    "width": 2400,
+    "height": 1553,
+    "category": "Регион",
+    "author": "Jonathan Roberts",
+    "source_url": "https://www.fantasticmaps.com/free-stuff/",
+    "license": "CC BY-NC-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/",
+    "changes": "Пропорциональное уменьшение, WebP. Игровой масштаб не назначен.",
+    "file": "fm_dd7cfead8805.webp"
+  },
+  {
+    "id": "fm_8af4b046c080",
+    "name": "Морской мир · пример",
+    "width": 1700,
+    "height": 1100,
+    "category": "Мир",
+    "author": "Jonathan Roberts",
+    "source_url": "https://www.fantasticmaps.com/2015/02/free-world-map/",
+    "license": "CC BY-NC-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/",
+    "changes": "Пропорциональное уменьшение, WebP. Игровой масштаб не назначен.",
+    "file": "fm_8af4b046c080.webp"
+  },
+  {
+    "id": "fm_8cad6f6e70a7",
+    "name": "Кораблекрушение",
+    "width": 1280,
+    "height": 1024,
+    "category": "Боевая",
+    "author": "Jonathan Roberts",
+    "source_url": "https://www.fantasticmaps.com/free-stuff/",
+    "license": "CC BY-NC-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/",
+    "changes": "Пропорциональное уменьшение, WebP. Игровой масштаб не назначен.",
+    "file": "fm_8cad6f6e70a7.webp"
+  },
+  {
+    "id": "fm_cave",
+    "name": "Пещера без подписей",
+    "width": 1600,
+    "height": 1600,
+    "category": "Боевая",
+    "author": "Jonathan Roberts",
+    "source_url": "https://www.fantasticmaps.com/free-stuff/",
+    "license": "CC BY-NC-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/",
+    "changes": "Пропорциональное уменьшение, WebP. Игровой масштаб не назначен.",
+    "file": "fm_cave.webp"
+  },
+  {
+    "id": "fm_inn",
+    "name": "Трактир с секретом",
+    "width": 1600,
+    "height": 1600,
+    "category": "Боевая",
+    "author": "Jonathan Roberts",
+    "source_url": "https://www.fantasticmaps.com/free-stuff/",
+    "license": "CC BY-NC-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/",
+    "changes": "Пропорциональное уменьшение, WebP. Игровой масштаб не назначен.",
+    "file": "fm_inn.webp"
+  },
+  {
+    "id": "fm_inn2",
+    "name": "Трактир · второй этаж",
+    "width": 1600,
+    "height": 1600,
+    "category": "Боевая",
+    "author": "Jonathan Roberts",
+    "source_url": "https://www.fantasticmaps.com/free-stuff/",
+    "license": "CC BY-NC-SA 3.0",
+    "license_url": "https://creativecommons.org/licenses/by-nc-sa/3.0/",
+    "changes": "Пропорциональное уменьшение, WebP. Игровой масштаб не назначен.",
+    "file": "fm_inn2.webp"
+  }
+]

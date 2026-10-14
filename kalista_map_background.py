@@ -19,6 +19,14 @@ def ensure_backgrounds(data):
     for key in ('calibrations','assignments','layouts'):
         state.setdefault(key,{})
         if not isinstance(state[key],dict):raise ValueError('Повреждены настройки карт')
+    state.setdefault('metadata',{});state.setdefault('scene_displays',{})
+    if not isinstance(state['metadata'],dict) or not isinstance(state['scene_displays'],dict):raise ValueError('Повреждена библиотека карт')
+    for ident,info in state['metadata'].items():
+        if not isinstance(ident,str) or not isinstance(info,dict) or info.get('category','Боевая') not in ('Боевая','Город','Регион','Мир'):raise ValueError('Неверные настройки карты')
+        if any(not isinstance(info.get(k,''),str) for k in ('name','note')):raise ValueError('Неверные подписи карты')
+    if any(not isinstance(k,str) or not isinstance(v,str) for k,v in state['scene_displays'].items()):raise ValueError('Неверная карта сцены')
+    from kalista_obstacles import validate
+    validate(data)
     for ident,record in state['calibrations'].items():
         if not isinstance(ident,str) or not isinstance(record,dict):raise ValueError('Неверная калибровка карты')
         p1,p2=point(record.get('first')),point(record.get('second'))

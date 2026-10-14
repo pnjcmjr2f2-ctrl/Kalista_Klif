@@ -62,6 +62,8 @@ def move(data,source,target=None,rule='move_point',destination=None):
         else:
             amount=30.;vector=[(start[i]-goal[i])/distance for i in (0,1)] if distance else [1.,0.]
         end=[start[i]+vector[i]*amount for i in (0,1)]
+    from kalista_obstacles import check_path
+    check_path(data,start,end,"movement")
     distance=math.dist(start,end)
     if distance<=1e-9:raise ValueError('Укажи другую позицию')
     if distance>30.+1e-9:raise ValueError('За одно перемещение можно пройти не более 30 м')

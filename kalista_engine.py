@@ -244,7 +244,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -473,6 +473,8 @@ def migrate(saved):
     for enemy in data["enemies"]:
         if "side" in enemy and enemy["side"] not in ("Враг", "Союзник", "Нейтральный"):
             raise ValueError("Неизвестная сторона участника боя")
+    if saved.get('schema_version',5)<28:
+        invalidate_player_requests(data,'Согласование отключено; действие не применено, можно выполнить его напрямую')
     if saved.get('schema_version',5)<21:
         invalidate_player_requests(data,'Правила эффектов обновлены; предложи действие заново')
     for _,target in participants(data):
@@ -490,7 +492,7 @@ def migrate(saved):
         if isinstance(item["spell_power"],bool) or not isinstance(item["spell_power"],(int,float)) or not math.isfinite(item["spell_power"]):raise ValueError("Неверная сила заклинаний предмета")
     ensure_rarities(data)
     bind_registry(data)
-    data["schema_version"] = 27
+    data["schema_version"] = 28
     return data
 
 
@@ -1197,6 +1199,7 @@ def effective_crit_chance(data):
 
 
 def start_combat(data):
+    data["recent_actions"]=[]
     begin_rewards(data)
     for _,target in participants(data):
         target['eye_damage_boost']=False;target['defensive_stance']=False;target['eye_used']=False;target['movement_used']=False
@@ -1564,6 +1567,8 @@ def ranged_miss_chance(data,source_token,ability,target_token):
 
 
 def check_reach(data,source_token,action,target_token):
+    from kalista_obstacles import check_path
+    if data.get('distance_mode')=='meters' and not action.get('rule','').startswith('move_'):check_path(data,data['positions'][source_token],data['positions'][target_token])
     if data.get('distance_mode')=='meters':
         if action.get('kind','damage')!='damage' and action.get('range_m') is None:return
         check_point_range(data,source_token,action,data['positions'][target_token]);return
@@ -1582,6 +1587,8 @@ def counterattack(data,source_token,target_token,result):
     if source_token==target_token or target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0:return []
     if not target.get('counterattack_enabled') or result['hp_loss']<=0 or distance_between(data,source_token,target_token)!='Ближняя':return []
     if target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0 or any(e['kind']=='fear' for e in target.get('effects',[])):return []
+    from kalista_obstacles import blocking_wall
+    if data.get('distance_mode')=='meters' and blocking_wall(data,data['positions'][target_token],data['positions'][source_token]):return []
     roll=random.random()
     if roll>=.65:return [f"{target['name']}: контратака не сработала ({roll*100:.1f}% ≥ 65%)"]
     if random.random()<evasion_chance(source):return [f"{source['name']}: уклонение от контратаки"]
@@ -1597,9 +1604,11 @@ def counterattack(data,source_token,target_token,result):
 def validate_action_state(data):
     data.setdefault('turn_serial', 0)
     data.setdefault('turn_actions', [])
+    data.setdefault('recent_actions',deepcopy(data['turn_actions'][-10:]))
+    if not isinstance(data['recent_actions'],list) or len(data['recent_actions'])>20:raise ValueError('Повреждены последние действия')
     nonnegative_int(data['turn_serial'], 'Номер хода')
     if not isinstance(data['turn_actions'], list): raise ValueError('Повреждена история хода')
-    for entry in data['turn_actions']:
+    for entry in data['turn_actions']+data['recent_actions']:
         validate_tree(entry, dict(source='',name='',target='',result='',counts=True))
         if not {'source','name','target','result','counts'} <= entry.keys(): raise ValueError('Неполная запись хода')
     data.setdefault('player_requests', [])
@@ -1693,6 +1702,8 @@ def check_action_limit(data, source_token, reaction=False):
 def record_turn_action(data, source_token, name, target, result, counts=True):
     data.setdefault('turn_actions', []).append(dict(source=source_token, name=name, target=target, result=result, counts=counts))
     data['turn_actions'] = data['turn_actions'][-50:]
+    data.setdefault('recent_actions',[]).append(deepcopy(data['turn_actions'][-1]))
+    data['recent_actions']=data['recent_actions'][-20:]
 
 
 def action_damage_factor(target, action):
@@ -1836,6 +1847,8 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
 
 
 def effect_lifetime(effect):
+    from kalista_battle_readout import effect_label
+    return effect_label(effect)
     duration=effect.get('duration')
     if duration is None: return effect['name']+' · бессрочно'
     when='Осталось ходов цели' if effect['kind'] in ('dot','hot','weakness','fear') else 'Осталось полных раундов'

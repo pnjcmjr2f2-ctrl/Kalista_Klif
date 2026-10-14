@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v42 · полный лист игрока
+Калиста Клиф — v43 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -24,10 +24,11 @@ from copy import deepcopy
 import hmac
 import secrets
 import time
-from kalista_storage import read_state, write_state, StaleState, create_snapshot, list_snapshots, restore_snapshot
+from kalista_storage import read_state, write_state, StaleState, create_snapshot, list_snapshots, restore_snapshot, undo_entries
 from kalista_engine import *
 from kalista_theme import THEME
 from kalista_text import readable_rules
+from kalista_battle_readout import effect_label,render_recent_results
 from kalista_player_ui import render_section as render_player_sheet_section, SECTIONS as PLAYER_SECTIONS
 
 SAVE_FILE = Path(__file__).parent / "kalista_save.json"
@@ -215,24 +216,32 @@ def commit_current(label=None):
 
 
 def undo_last_action():
-    history = st.session_state.get("_undo_history", [])
-    if not history:
-        return False
-    entry = history[-1]
-    restored = migrate(deepcopy(entry["data"]))
-    recalc(restored)
-    restored["combat_log"].insert(0, f"[{datetime.now().strftime('%H:%M:%S')}] Отменено: {entry['label']}")
-    restored["combat_log"] = restored["combat_log"][:80]
-    if not save(restored):
-        return False
-    history.pop()
-    st.session_state.data = restored
-    st.session_state["_committed_data"] = deepcopy(restored)
-    # Иначе значения созданных ранее полей могут немедленно вернуть отменённое действие.
-    keep = {"data", "_committed_data", "_undo_history", "page", "battle_section", "gm_section", "_battle_preferences", "_save_revision", "_role", "_edit_mode"}
-    for key in list(st.session_state):
-        if key not in keep: del st.session_state[key]
-    st.rerun()
+    from kalista_storage import undo_state
+    try:
+        restored,revision=undo_state(SAVE_FILE,st.session_state['_save_revision'],migrate)
+        st.session_state.data=restored
+        st.session_state['_committed_data']=deepcopy(restored)
+        st.session_state['_save_revision']=revision
+        st.session_state['_undo_history']=[]
+        keep={'data','_committed_data','_undo_history','page','battle_section','gm_section','_battle_preferences','_save_revision','_role','_edit_mode'}
+        for key in list(st.session_state):
+            if key not in keep:del st.session_state[key]
+        st.rerun()
+    except (ValueError,OSError) as exc:st.error(str(exc))
+
+
+def render_range_audit(data):
+    if not editing():return
+    rows=[]
+    for owner,abilities in [(data['name'],data['spells'])]+[(a['name'],a.get('actions',[])) for t,a in participants(data) if t!='player']:
+        for a in abilities:
+            if a.get('kind',a.get('action','damage'))!='damage' or a.get('rule','').startswith('move_'):continue
+            if a.get('area_shape')=='cone':continue
+            if ability_range(a) is None:rows.append({'Персонаж':owner,'Способность':a['name'],'Дальность':'Не задана — без ограничения'})
+    with st.expander(f'Дальность не задана · {len(rows)}'):
+        if rows:st.dataframe(rows,hide_index=True,use_container_width=True)
+        else:st.caption('У всех атак задана дальность.')
+        st.caption('Ближние атаки без отдельного числа ограничены 5 м. У конуса используется его длина. Настрой дальность в карточке способности.')
 
 
 def remembered_select(label, options, key, default=None, **kwargs):
@@ -282,7 +291,7 @@ def render_battle_header(data):
         if data['combat_active']:
             columns[0].button('Начать',key='battle_start',disabled=True,use_container_width=True)
         else:columns[0].button('Конец хода',key='battle_next',disabled=True,use_container_width=True)
-        history=st.session_state.get('_undo_history',[])
+        history=undo_entries(SAVE_FILE)
         if columns[1].button('Отмена',key='battle_undo',disabled=not history,help=f"Отменить: {history[-1]['label']}" if history else 'Нет действий для отмены',use_container_width=True):undo_last_action()
         if columns[2].button('Стоп',key='battle_stop',disabled=not data['combat_active'],use_container_width=True):
             log(end_combat(data));persist_and_rerun('Завершение боя')
@@ -609,9 +618,9 @@ def render_focus_cards(data,source_token,target_token,player_mode=False):
         ratio=max(0,min(100,100*target[hp]/max(1,target[maximum])))
         resource=f" · MP {target['mana_current']}/{target['mana_max']}" if 'mana_current' in target else ''
         effects=len(target.get('effects',[]))
-        statuses=[x['name']+(f" ({x['duration']})" if x.get('duration') else '') for x in target.get('effects',[])][:2]
-        if target.get('eye_damage_boost'):statuses.insert(0,'Десница ×2')
-        if target.get('defensive_stance'):statuses.insert(0,'Стойка −30%')
+        statuses=[effect_label(x) for x in target.get('effects',[])][:2]
+        if target.get('eye_damage_boost'):statuses.insert(0,'Десница ×2 · до конца этого хода')
+        if target.get('defensive_stance'):statuses.insert(0,'Стойка −30% · до начала следующего хода')
         status=escape(' · '.join(statuses))
         portrait='/component/kalista_interactive_map.kalista_tactical_map/kalista.png' if token=='player' else (profile.get('portrait_url') or '/component/kalista_interactive_map.kalista_tactical_map/sheogarat.webp') if token=='ally' else ''
         avatar=f'<img class="focus-portrait" src="{escape(portrait,quote=True)}" alt=""/>' if portrait else '<span class="focus-initial">'+escape(target['name'][:1])+'</span>'
@@ -793,7 +802,7 @@ def render_tactical_map(data,source,target,player_mode=False):
     from kalista_interactive_map import tactical_map
     if editing() and not player_mode:
         from kalista_map_library_ui import render_library
-        render_library(data,persist_and_rerun)
+        st.caption('Библиотека и настройки преград: Ведущий → Карты.')
     from kalista_map_background import background
     backdrop=background(data)
     if backdrop:st.caption('Локация: '+backdrop['name']+f" · {backdrop['width']*backdrop['metres_per_pixel']:.1f} × {backdrop['height']*backdrop['metres_per_pixel']:.1f} м")
@@ -806,14 +815,14 @@ def render_tactical_map(data,source,target,player_mode=False):
         destination=tactical_map(data,source,'movement_canvas_'+source,mode='setup' if setup else 'move',selected=selected)
         st.caption('Потяни фигурку или коснись точки. Зелёный круг — 30 м перемещения; линия показывает расстояние. Для просмотра поля включи «Сдвиг».')
         disabled=(data['combat_active'] and a.get('movement_used')) or a[hp_fields(a)[0]]<=0 or any(e['kind']=='fear' for e in a['effects'])
-        if st.button('Сохранить расстановку' if setup else ('Предложить перемещение' if player_mode else 'Переместиться'),key='map_apply_'+source,disabled=bool(disabled and not setup),use_container_width=True):
+        if st.button('Сохранить расстановку' if setup else ('Переместиться'),key='map_apply_'+source,disabled=bool(disabled and not setup),use_container_width=True):
             try:
                 if setup:
                     data['positions'][selected]=point(destination);data['map_revision']=data.get('map_revision',0)+1
                     invalidate_player_requests(data,'Расстановка изменилась; предложи действие заново')
                     persist_and_rerun('Расстановка на карте')
                 elif player_mode:
-                    submit_player_action(data,action['id'],[source],False,destination=destination);st.success('Перемещение предложено ведущему')
+                    submit_player_action(data,action['id'],[source],False,destination=destination);st.success('Перемещение выполнено')
                 else:
                     for message in perform_action(data,source,action['id'],[source],destination=destination):log(message)
                     persist_and_rerun('Перемещение на карте')
@@ -877,7 +886,7 @@ def render_battle_workstation(data,source,target_key,player_mode=False):
     mode=st.radio('Режим карты',['Атака','Перемещение'],horizontal=True,key='board_mode_'+source)
     if editing() and not player_mode:
         from kalista_map_library_ui import render_library
-        render_library(data,persist_and_rerun)
+        st.caption('Библиотека и настройки преград: Ведущий → Карты.')
     setup=bool(editing() and not player_mode and st.toggle('Расстановка ведущего',key='map_setup_'+source))
     selected=source
     if setup:selected=remembered_select('Фигурка для расстановки',tokens,'map_edit_actor',default=source,format_func=lambda t:participant_label(data,t))
@@ -917,12 +926,15 @@ def render_battle_workstation(data,source,target_key,player_mode=False):
                         if data['combat_active'] and actor.get('movement_used'):reasons.append('Перемещение использовано')
                         if actor[hp_fields(actor)[0]]<=0:reasons.append('0 HP')
                         if any(e['kind']=='fear' for e in actor['effects']):reasons.append('Страх')
+                    if not setup:
+                        from kalista_obstacles import blocking_wall
+                        if blocking_wall(data,data['positions'][source],destination,'movement'):reasons.append('Путь перекрывает преграда')
                     if reasons:st.caption('Недоступно: '+'; '.join(reasons))
-                    if st.button('Сохранить расстановку' if setup else 'Предложить перемещение' if player_mode else 'Переместиться',key='map_apply_'+source,type='primary',disabled=bool(reasons),use_container_width=True):
+                    if st.button('Сохранить расстановку' if setup else 'Переместиться',key='map_apply_'+source,type='primary',disabled=bool(reasons),use_container_width=True):
                         try:
                             if setup:
                                 data['positions'][selected]=destination;data['map_revision']=data.get('map_revision',0)+1;invalidate_player_requests(data,'Расстановка изменилась; предложи действие заново');persist_and_rerun('Расстановка на карте')
-                            elif player_mode:submit_player_action(data,action['id'],[source],False,destination=destination);st.success('Перемещение предложено ведущему')
+                            elif player_mode:submit_player_action(data,action['id'],[source],False,destination=destination);st.success('Перемещение выполнено')
                             else:
                                 for message in perform_action(data,source,action['id'],[source],destination=destination):log(message)
                                 persist_and_rerun('Перемещение на карте')
@@ -934,7 +946,17 @@ def render_battle_workstation(data,source,target_key,player_mode=False):
     return target
 
 
+@st.fragment(run_every='3s')
 def render_battle(data):
+    data=st.session_state.get("data",data)
+    latest,revision=read_state(SAVE_FILE)
+    if latest is not None and revision!=st.session_state.get('_save_revision'):
+        data=migrate(latest);recalc(data)
+        st.session_state['data']=data
+        st.session_state['_committed_data']=deepcopy(data)
+        st.session_state['_save_revision']=revision
+
+    render_range_audit(data)
     render_loot(data)
     render_battle_header(data)
     section = st.session_state["battle_section"]
@@ -956,11 +978,12 @@ def render_battle(data):
             active_token = remembered_select("Кто действует", tokens, "battle_manual_actor", default="player",
                                              format_func=lambda value: participant_label(data, value))
         token=render_battle_workstation(data,active_token,f'turn_target_{active_token}')
+        render_recent_results(data)
         render_turn_context(data)
         with st.expander("Подробнее об участнике и цели"):
             render_combatant_card(data,active_token,"Действует",active=True)
             render_combatant_card(data,token,"Цель")
-        if data["combat_log"]: st.caption("Последнее: " + data["combat_log"][0])
+        st.caption('Попадание в область определяется по центру фигурки. Стены учитываются только после разметки ведущим.')
         return
     default = active_token or "player"
     token = remembered_select("Выбранный участник", tokens, "battle_target", default=default,
@@ -1143,15 +1166,21 @@ def render_npc_editor(data):
 
 def render_gm(data):
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Стол ведущего</div>", unsafe_allow_html=True)
-    history = st.session_state.get('_undo_history', [])
+    history = undo_entries(SAVE_FILE)
     if st.button('Отменить последнее действие', key='gm_undo', disabled=not history, help=history[-1]['label'] if history else 'Нет действий для отмены'):
         undo_last_action()
     prefs = st.session_state.setdefault('_battle_preferences', {})
     if 'gm_section' not in st.session_state: st.session_state['gm_section'] = prefs.get('gm_section', 'Сцены')
-    section = st.radio('Раздел ведущего', ['Сцены','NPC','Записная книжка'], key='gm_section', horizontal=True, label_visibility='collapsed')
+    section = st.radio('Раздел ведущего', ['Сцены','NPC','Карты','Записная книжка'], key='gm_section', horizontal=True, label_visibility='collapsed')
     prefs['gm_section'] = section
-    if section == 'Сцены': render_scene_editor(data)
+    if section == 'Сцены':
+        from kalista_map_library_ui import render_scene_map
+        render_scene_map(data,'gm_scene_location')
+        render_scene_editor(data)
     elif section == 'NPC': render_npc_editor(data)
+    elif section == 'Карты':
+        from kalista_map_library_ui import render_map_hub
+        render_map_hub(data,persist_and_rerun)
     else:
         with st.form('gm_notebook'):
             notes = st.text_area('Общие заметки ведущего', value=data['gm_notes'], height=260)
@@ -1261,11 +1290,11 @@ def render_action_panel(data, source_token, victim_token, player_mode=False, sel
         except ValueError as exc:reasons.append(str(exc));unavailable=True
     if area_center is not None and area_problem:reasons.append(area_problem);unavailable=True
     if reasons:st.caption('Недоступно: '+'; '.join(dict.fromkeys(reasons)))
-    if st.button('Предложить действие' if player_mode else 'Применить действие',key=f'perform_{source_token}_{aid}',type='primary',disabled=unavailable,use_container_width=True):
+    if st.button('Применить действие',key=f'perform_{source_token}_{aid}',type='primary',disabled=unavailable,use_container_width=True):
         try:
             if player_mode:
                 submit_player_action(data,aid,victims,critical,area_center=area_center)
-                st.success('Предложение отправлено ведущему')
+                st.success('Действие применено')
             else:
                 for message in perform_action(data,source_token,aid,victims,critical,reaction,manual_amount,area_center=area_center): log(message)
                 persist_and_rerun('Действие: '+action['name'])
@@ -1363,22 +1392,13 @@ def require_access():
     st.stop()
 
 
-def submit_player_action(data, aid, victims, critical, destination=None, area_center=None):
-    latest, rev=read_state(SAVE_FILE)
-    latest=migrate(latest if latest is not None else deepcopy(DEFAULT))
-    if latest.get('map_revision',0)!=data.get('map_revision',0):raise ValueError('Карта изменилась; обнови экран')
-    if latest['turn_serial']!=data['turn_serial']: raise ValueError('Ход изменился. Обнови экран и предложи действие заново.')
-    action=next((a for a in latest['ally']['actions'] if a['id']==aid),None)
-    if action is None: raise ValueError('Действие изменилось; обнови экран')
-    if latest['combat_active'] and actor_token(get_current_actor(latest))!='ally' and not action.get('reaction'): raise ValueError('Сейчас ход другого участника')
-    # Validate by simulation; no game resources are consumed until the GM accepts.
-    perform_action(deepcopy(latest),'ally',aid,victims,False,simulation=True,destination=destination,area_center=area_center)
-    pending=[r for r in latest.get('player_requests',[]) if r['status']=='pending']
-    if pending: raise ValueError('Предыдущее предложение ещё ожидает решения ведущего')
-    latest.setdefault('player_requests',[]).append(dict(id=uuid4().hex,action_id=aid,action_name=action['name'],victims=victims,
-                                                      critical=False,turn_serial=latest['turn_serial'],status='pending',message='Ожидает ведущего',destination=destination,area_center=area_center,map_revision=latest.get('map_revision',0)))
-    latest['player_requests']=latest['player_requests'][-30:]
-    write_state(SAVE_FILE,latest,rev,migrate)
+def submit_player_action(data, aid, victims, critical=False, destination=None, area_center=None):
+    from kalista_direct import apply_player_action
+    latest,revision,messages=apply_player_action(SAVE_FILE,data,aid,victims,destination,area_center)
+    st.session_state['data']=latest
+    st.session_state['_committed_data']=deepcopy(latest)
+    st.session_state['_save_revision']=revision
+    st.rerun()
 
 
 @st.fragment(run_every='3s')
@@ -1560,6 +1580,14 @@ def render_player():
         used=sum(x['source']=='ally' and x.get('counts',True) for x in data.get('turn_actions',[]))
         with st.container(key='player_battle_hud'):
             st.caption(('Раунд '+str(data['round'])+' · ход: '+actor['name'] if actor else 'Бой не начат')+f" · Действия {max(0,2-used)}/2 · Перемещение "+('использовано' if data['ally'].get('movement_used') else 'доступно'))
+        if data['combat_active']:
+            own=bool(actor and actor_token(actor)=='ally')
+            if st.button('Конец моего хода',key='player_end_turn',disabled=not own,use_container_width=True):
+                try:
+                    from kalista_direct import finish_player_turn
+                    latest,newrev=finish_player_turn(SAVE_FILE,data)
+                    st.session_state['data']=latest;st.session_state['_committed_data']=deepcopy(latest);st.session_state['_save_revision']=newrev;st.rerun()
+                except (ValueError,OSError) as exc:st.error(str(exc))
         if not data['combat_active'] and data.get('last_battle_reward'):
             hero=next((x for x in data['last_battle_reward']['heroes'] if x['token']=='ally'),None)
             if hero:st.caption(f"Награда за бой: +{hero['xp']} XP · уровень {hero['level_after']}"+(f" · +{hero['free_points']} свободных очков" if hero['free_points'] else ''))
@@ -1568,15 +1596,32 @@ def render_player():
         with st.expander('Подробнее об участнике и цели'):
             render_combatant_card(data,'ally','Твой персонаж',active=True)
             render_combatant_card(data,target,'Цель')
-        for request in public['requests'][-3:]: st.caption(request['action_name']+' · '+request['message'])
+        render_recent_results(data)
     elif section=='Сцена':
+        from kalista_map_library_ui import render_scene_map
+        render_scene_map(data)
         if public['scene']: st.markdown(public['scene'])
         else: st.caption('Ведущий ещё не начал сцену')
     else:render_player_sheet_section(section,data,SAVE_FILE.parent)
     if section=='Бой' and profile and profile['abilities']:
         with st.expander('Правила способностей'):st.write(readable_rules(profile['abilities']))
-    if section=='Бой':st.caption('Предложение действия отправляется ведущему на проверку.')
+    if section=='Бой':st.caption('Действия применяются сразу. Попадание в область проверяется по центру фигурки.')
     elif section not in ('Сцена','Кубики'):st.caption('Изменения листа сохраняются кнопками в формах.')
+
+
+@st.fragment(run_every='3s')
+def render_sidebar_status():
+    latest,_=read_state(SAVE_FILE)
+    data=migrate(latest) if latest is not None else st.session_state.data
+    st.caption(f"Ур.{data['level']} · {data['class']}")
+    with st.container(key='sidebar_health'):
+        st.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0), text=f"HP {data['hp_current']}/{data['hp_max']}")
+    with st.container(key='sidebar_mana'):
+        st.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0), text=f"MP {data['mana_current']}/{data['mana_max']}")
+    if data.get("combat_active"):
+        st.markdown(f"**Раунд {data['round']}**")
+        actor=get_current_actor(data)
+        if actor: st.info(f"Ход: {actor['name']}")
 
 
 # ===================== INIT =====================
@@ -1604,7 +1649,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 27:
+if data.get("schema_version", 5) < 28:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1632,25 +1677,17 @@ for pending, selected, search in (("_gm_select_scene", "gm_scene_selected", "gm_
 # ===================== SIDEBAR =====================
 with st.sidebar:
     st.markdown("<div class='main-title' style='font-size:1.35rem'>✧ Калиста</div>", unsafe_allow_html=True)
-    st.caption(f"Ур.{data['level']} · {data['class']}")
-    with st.container(key='sidebar_health'):
-        st.progress(min(data["hp_current"]/max(data["hp_max"],1),1.0), text=f"HP {data['hp_current']}/{data['hp_max']}")
-    with st.container(key='sidebar_mana'):
-        st.progress(min(data["mana_current"]/max(data["mana_max"],1),1.0), text=f"MP {data['mana_current']}/{data['mana_max']}")
-    if data.get("combat_active"):
-        st.markdown(f"**Раунд {data['round']}**")
-        actor=get_current_actor(data)
-        if actor: st.info(f"Ход: {actor['name']}")
+    render_sidebar_status()
     active_scene = scene_record(data, data['active_scene_id'])
     if active_scene: st.caption('Сцена: ' + active_scene['name'])
     st.divider()
     if st.button('Обновить игру', key='sync_game', use_container_width=True):
-        for key in list(st.session_state):
-            if key != '_role': del st.session_state[key]
+        st.session_state['data']=load()
+        st.session_state['_committed_data']=deepcopy(st.session_state['data'])
         st.rerun()
     if st.button('Выйти', key='gm_logout'):
         st.session_state.clear();st.rerun()
-    render_request_inbox()
+    # Действия игрока применяются напрямую; очередь согласования больше не используется.
     st.toggle('Режим редактирования',key='_edit_mode',help='Показывает настройки персонажей, сцен и правил.')
     page=st.radio("Меню",["Обзор","Бой","Отряд","Экипировка","Характеристики","Инвентарь","Заклинания","Квесты","Ведущий","Кубики","Биография"],label_visibility="collapsed", key="page")
     st.divider()
@@ -1689,7 +1726,7 @@ def apply_view_special(key):
 def apply_view_equip(item_id):
     equip_root_reserve(data,item_id);persist_and_rerun('Смена снаряжения')
 
-if gm_view(page,data,apply_view_item,apply_view_special,apply_view_equip):st.stop()
+if gm_view(page,data,apply_view_item,apply_view_special,apply_view_equip,persist_and_rerun):st.stop()
 
 # ===================== ОБЗОР =====================
 if page=="Обзор":
@@ -1891,6 +1928,7 @@ elif page=="Инвентарь":
 
 
 elif page=="Заклинания":
+    render_range_audit(data)
     st.markdown("<div class='main-title' style='font-size:1.6rem'>Заклинания</div>", unsafe_allow_html=True)
     st.caption("Перезарядка указана в общих раундах. 0 — без перезарядки. Применение — на странице «Бой».")
 

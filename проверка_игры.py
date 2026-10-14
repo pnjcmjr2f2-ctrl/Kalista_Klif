@@ -90,11 +90,9 @@ with TemporaryDirectory() as directory:
  aid=next(a['id'] for a in state['ally']['actions'] if a['name']=='Удар оружием')
  player.selectbox(key='action_choice_ally').set_value(aid).run()
  player.button(key='perform_ally_'+aid).click().run();assert not player.exception
- actual,_=read_state(save);assert len(actual['player_requests'])==1 and actual['player_requests'][0]['status']=='pending'
- hp=actual['enemies'][0]['hp'];assert hp==1500
+ actual,_=read_state(save);assert not actual['player_requests']
+ hp=1500;assert actual['enemies'][0]['hp']<hp
  gm.button(key='sync_game').click().run();gm.radio(key='page').set_value('Бой').run();assert not gm.exception
- rid=actual['player_requests'][0]['id'];gm.button(key='accept_'+rid).click().run();assert not gm.exception
- actual,_=read_state(save);assert actual['player_requests'][0]['status']=='accepted' and actual['enemies'][0]['hp']<hp
  accepted_hp=actual['enemies'][0]['hp'];gm.run();actual,_=read_state(save);assert actual['enemies'][0]['hp']==accepted_hp
- gm.button(key='battle_undo').click().run();actual,_=read_state(save);assert actual['enemies'][0]['hp']==hp and actual['player_requests'][0]['status']=='pending'
- print('Passed: full encounter, separate hits/shields, multi-target atomicity, action limits/reactions, healing cooldown/charges, armor stack cap, dice/penetration, NPC action copies, public secrecy, all pages, login/player separation, two-reader CAS, player proposal/GM acceptance/undo/no double apply.')
+ gm.button(key='battle_undo').click().run();actual,_=read_state(save);assert actual['enemies'][0]['hp']==hp and not actual['player_requests']
+ print('Passed: full encounter, separate hits/shields, multi-target atomicity, action limits/reactions, healing cooldown/charges, armor stack cap, dice/penetration, NPC action copies, public secrecy, all pages, login/player separation, two-reader CAS, direct player action/GM undo/no double apply.')

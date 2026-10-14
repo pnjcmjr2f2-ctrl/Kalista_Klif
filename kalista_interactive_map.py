@@ -18,7 +18,8 @@ def tactical_map(data, source, key, center=None, radius=0, mode='move', selected
     ability_key='battle_spell' if source=='player' else 'action_choice_'+source
     active_ability=st.session_state.get(ability_key)
     epoch=f"{data.get('map_revision',0)}:{source}:{selected or source}:{mode}:{data.get('turn_serial',0)}:{center}:{map_id(data)}:{target}:{active_ability}:{shape}:{cone_length}:{cone_angle}"
-    event=_component(background=backdrop,actors=actors,palette=palette,active_ability=active_ability,view_epoch=str(data.get('map_revision',0))+map_id(data)+(selected or source),target=target,range_m=range_m,shape=shape,cone_length=cone_length,cone_angle=cone_angle,source=selected or source,center=center,radius=radius,mode=mode,epoch=epoch,key=key,default=None)
+    from kalista_obstacles import walls
+    event=_component(obstacles=walls(data),background=backdrop,actors=actors,palette=palette,active_ability=active_ability,view_epoch=str(data.get('map_revision',0))+map_id(data)+(selected or source),target=target,range_m=range_m,shape=shape,cone_length=cone_length,cone_angle=cone_angle,source=selected or source,center=center,radius=radius,mode=mode,epoch=epoch,key=key,default=None)
     if isinstance(event,dict) and event.get('epoch')==epoch:
         if isinstance(event.get('ability'),(str,int)) and not isinstance(event.get('ability'),bool) and event.get('ability') in {a['id'] for a in palette} and event['ability']!=active_ability:
             st.session_state['_pending_ability_'+source]=event['ability'];st.rerun()
@@ -41,3 +42,24 @@ def calibrate_map(data,ident,key):
             if isinstance(pair,list) and len(pair)==2:return [point(p) for p in pair]
         except ValueError:pass
     return None
+
+
+def draw_wall(data,key):
+    from kalista_obstacles import walls
+    from kalista_map_background import background
+    epoch='walls:'+str(data.get('map_revision',0))
+    event=_component(background=background(data),actors=[],obstacles=walls(data),source='',center=None,radius=0,mode='wall',epoch=epoch,key=key,default=None)
+    if isinstance(event,dict) and event.get('epoch')==epoch:
+        pair=event.get('points')
+        if isinstance(pair,list) and len(pair)==2:
+            try:
+                p=[point(x) for x in pair]
+                if math.dist(*p)>1e-9:return p
+            except ValueError:pass
+    return None
+
+
+def view_location(data,ident,key):
+    from kalista_map_background import background
+    backdrop=background(data,ident,uncalibrated=True)
+    if backdrop:_component(background=backdrop,actors=[],source='',center=None,radius=0,mode='view',epoch='view:'+ident,key=key,default=None)

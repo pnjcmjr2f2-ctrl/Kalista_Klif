@@ -18,7 +18,7 @@ with TemporaryDirectory() as directory:
   app.session_state['_edit_mode']=True;app.radio(key=selector).set_value('Характеристики').run();assert not app.exception
   assert app.number_input or any(b.label=='＋' for b in app.button)
   app.session_state['_edit_mode']=False;app.radio(key=selector).set_value('Бой').run();assert not app.exception
-  assert any(b.label in ('Начать','Применить способность','Предложить действие') for b in app.button)
+  assert any(b.label in ('Начать','Применить способность','Применить действие') for b in app.button)
   assert not any(x.label in ('Назначить итоговый урон вручную','Ручная поправка: урон, лечение, мана и щит') for x in app.checkbox)
  assert read_state(save)[0]['ally']['hp']==d['ally']['hp']
 print('Passed: view-only pages for both roles, editing toggle, retained combat actions, hidden admin fields and preserved resources.')

@@ -40,10 +40,17 @@ function fit(locationOnly=false){
 }
 function ring(p,r,color,fill){const s=screen(p);ctx.beginPath();ctx.arc(...s,r*scale,0,Math.PI*2);ctx.fillStyle=fill;ctx.fill();ctx.strokeStyle=color;ctx.lineWidth=1.5;ctx.stroke()}
 function ruler(first,second,label){const a=screen(first),b=screen(second);ctx.strokeStyle='#dcc0f3';ctx.lineWidth=2;ctx.setLineDash([5,4]);ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#fff';ctx.fillText(label,(a[0]+b[0])/2+4,(a[1]+b[1])/2-7)}
+function crosses(a,b,c,d){
+ const eps=1e-8,cross=(p,q,r)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);
+ const on=(p,q,r)=>Math.abs(cross(p,q,r))<=eps&&[0,1].every(i=>r[i]>=Math.min(p[i],q[i])-eps&&r[i]<=Math.max(p[i],q[i])+eps);
+ return cross(a,b,c)*cross(a,b,d)<0&&cross(c,d,a)*cross(c,d,b)<0||on(a,b,c)||on(a,b,d)||on(c,d,a)||on(c,d,b);
+}
+function blocked(a,b,kind='attacks'){return Math.hypot(a[0]-b[0],a[1]-b[1])>1e-9&&(args.obstacles||[]).some(w=>w[kind]&&crosses(a,b,w.first,w.second))}
+function drawWalls(){(args.obstacles||[]).forEach(w=>{const a=screen(w.first),b=screen(w.second);ctx.beginPath();ctx.moveTo(...a);ctx.lineTo(...b);ctx.strokeStyle=w.attacks&&w.movement?'#ff6e69':w.attacks?'#d1a0fa':'#77d5c0';ctx.lineWidth=4;ctx.stroke()})}
 function coneHit(actor,aim,target){
  if(!actor||!aim||target.id===actor.id)return false;
  const dx=aim[0]-actor.position[0],dy=aim[1]-actor.position[1],direction=Math.hypot(dx,dy);
- if(direction<=1e-9)return false;
+ if(direction<=1e-9||blocked(actor.position,target.position))return false;
  const x=target.position[0]-actor.position[0],y=target.position[1]-actor.position[1],distance=Math.hypot(x,y);
  return distance<=args.cone_length+1e-9&&(distance<=1e-9||(x*dx+y*dy)/(distance*direction)>=Math.cos(args.cone_angle*Math.PI/360)-1e-12);
 }
@@ -62,6 +69,13 @@ function draw(){
   const start=screen([0,0]);
   // One uniform metres/pixel ratio on both axes. Never stretch to viewport.
   ctx.drawImage(image,start[0],start[1],background.width*background.metres_per_pixel*scale,background.height*background.metres_per_pixel*scale);
+ }
+ drawWalls();
+ if(args.mode==='view'){hint.textContent='Карта локации · приближай и сдвигай поле';return;}
+ if(args.mode==='wall'){
+  calibrationPoints.forEach((p,i)=>{const v=screen(p);ctx.beginPath();ctx.arc(...v,7,0,Math.PI*2);ctx.fillStyle='#ffb45e';ctx.fill();ctx.fillText(String(i+1),v[0]+10,v[1]-10)});
+  if(calibrationPoints.length===2)ruler(...calibrationPoints,'Новая преграда');
+  hint.textContent=pan?'Сдвиг карты':calibrationPoints.length===2?'Преграда выбрана — сохрани под картой':'Выбери '+(calibrationPoints.length?'вторую':'первую')+' точку преграды';return;
  }
  if(args.mode==='calibrate'){
   calibrationPoints.forEach((p,i)=>{const s=screen([p[0],-p[1]]);ctx.beginPath();ctx.arc(...s,7,0,Math.PI*2);ctx.fillStyle='#ffb45e';ctx.fill();ctx.fillStyle='#fff';ctx.fillText(String(i+1),s[0]+10,s[1]-10)});
@@ -82,21 +96,25 @@ function draw(){
  (args.actors||[]).forEach((a,index)=>{
   const s=screen(a.id===args.source&&dest&&['move','setup'].includes(args.mode)?dest:a.position);
   const selected=args.mode==='target'&&a.id===args.target;
-  const hit=args.mode==='area'&&args.shape==='cone'?coneHit(actor,dest,a):dest&&args.radius&&Math.hypot(a.position[0]-dest[0],a.position[1]-dest[1])<=args.radius;
+  const hit=args.mode==='area'&&args.shape==='cone'?coneHit(actor,dest,a):dest&&args.radius&&Math.hypot(a.position[0]-dest[0],a.position[1]-dest[1])<=args.radius&&!blocked(dest,a.position)&&(!actor||!blocked(actor.position,dest));
   const tokenRadius=Math.max(12,Math.min(18,scale*3));ctx.beginPath();ctx.arc(...s,tokenRadius,0,Math.PI*2);ctx.fillStyle=a.enemy?'#d66c7f':'#91c5a6';ctx.fill();ctx.strokeStyle=hit||selected?'#ffb45e':a.id===args.source?'#dcc0f3':'#4c3e55';ctx.lineWidth=hit||selected||a.id===args.source?3:1;ctx.stroke();ctx.fillStyle='#1b1520';ctx.textAlign='center';const portrait=portraits[a.id];if(portrait?.complete&&portrait.naturalWidth){ctx.save();ctx.beginPath();ctx.arc(...s,tokenRadius-2,0,Math.PI*2);ctx.clip();const side=Math.min(portrait.naturalWidth,portrait.naturalHeight);ctx.drawImage(portrait,(portrait.naturalWidth-side)/2,0,side,side,s[0]-tokenRadius+2,s[1]-tokenRadius+2,2*tokenRadius-4,2*tokenRadius-4);ctx.restore()}else ctx.fillText(a.id==='ally'?'Ш':String(index+1),s[0],s[1]+5);ctx.textAlign='left';ctx.fillStyle='#17121d';ctx.fillRect(s[0]-18,s[1]+23,36,5);ctx.fillStyle='#91c5a6';ctx.fillRect(s[0]-18,s[1]+23,36*Math.max(0,Math.min(1,a.hp/Math.max(1,a.hp_max))),5);if(a.active){ctx.fillStyle='#ddc4ee';ctx.fillText('▶',s[0]-29,s[1]+4)}if(a.effects?.length){ctx.fillStyle='#ffb45e';ctx.fillText('◆',s[0]+20,s[1]-12)}
  });
  ctx.fillStyle='#17121dcc';ctx.fillRect(5,354,Math.min(width-10,10*scale+16),40);ctx.fillStyle='#e9d7f7';ctx.fillRect(12,382,10*scale,2);ctx.fillText('10 м',12,374);
 }
-canvas.onpointerdown=e=>{canvas.setPointerCapture(e.pointerId);const p=local(e);drag={p,offset:[...offset],pan};if(!pan&&!['calibrate','target'].includes(args.mode)){chosen=world(p);draw()}};
-canvas.onpointermove=e=>{if(!drag)return;const p=local(e);if(drag.pan)offset=[drag.offset[0]+p[0]-drag.p[0],drag.offset[1]+p[1]-drag.p[1]];else if(!['calibrate','target'].includes(args.mode))chosen=world(p);draw()};
+canvas.onpointerdown=e=>{canvas.setPointerCapture(e.pointerId);const p=local(e);drag={p,offset:[...offset],pan};if(!pan&&!['calibrate','wall','target','view'].includes(args.mode)){chosen=world(p);draw()}};
+canvas.onpointermove=e=>{if(!drag)return;const p=local(e);if(drag.pan)offset=[drag.offset[0]+p[0]-drag.p[0],drag.offset[1]+p[1]-drag.p[1]];else if(!['calibrate','wall','target','view'].includes(args.mode))chosen=world(p);draw()};
 canvas.onpointerup=e=>{
  if(drag&&!drag.pan){
-  if(args.mode==='target'){const p=local(e);let hit=(args.actors||[]).map(a=>({a,d:Math.hypot(...screen(a.position).map((v,i)=>v-p[i]))})).filter(x=>x.d<=24).sort((a,b)=>a.d-b.d)[0];if(hit)send('streamlit:setComponentValue',{value:{epoch:args.epoch,target:hit.a.id},dataType:'json'});
+  if(args.mode==='target'){
+   const p=local(e);const hit=(args.actors||[]).map(a=>({a,d:Math.hypot(...screen(a.position).map((v,i)=>v-p[i]))})).filter(x=>x.d<=24).sort((a,b)=>a.d-b.d)[0];
+   if(hit)send('streamlit:setComponentValue',{value:{epoch:args.epoch,target:hit.a.id},dataType:'json'});
+  }else if(args.mode==='wall'){
+   if(calibrationPoints.length===2)calibrationPoints=[];calibrationPoints.push(world(local(e)));draw();send('streamlit:setComponentValue',{value:{epoch:args.epoch,points:calibrationPoints},dataType:'json'});
   }else if(args.mode==='calibrate'){
    const p=world(local(e)),b=args.background,pixel=[p[0],-p[1]];
    if(pixel[0]>=0&&pixel[0]<=b.width&&pixel[1]>=0&&pixel[1]<=b.height){if(calibrationPoints.length===2)calibrationPoints=[];calibrationPoints.push(pixel);draw();send('streamlit:setComponentValue',{value:{epoch:args.epoch,points:calibrationPoints},dataType:'json'})}
    else hint.textContent='Выбери точку внутри изображения';
-  }else if(chosen)send('streamlit:setComponentValue',{value:{epoch:args.epoch,point:chosen},dataType:'json'});
+  }else if(args.mode!=='view'&&chosen)send('streamlit:setComponentValue',{value:{epoch:args.epoch,point:chosen},dataType:'json'});
  }
  drag=null;
 };
@@ -110,13 +128,13 @@ document.querySelector('#pan').onclick=()=>{pan=!pan;document.querySelector('#pa
 document.querySelector('#reset').onclick=()=>{calibrationPoints=[];draw();send('streamlit:setComponentValue',{value:{epoch:args.epoch,points:[]},dataType:'json'})};
 window.addEventListener('message',e=>{
  if(e.source!==parent||e.data.type!=='streamlit:render')return;
- args=e.data.args;
+ args=e.data.args;if(args.mode==='view')pan=true;
  (args.actors||[]).forEach(a=>{if(a.portrait&&portraits[a.id]?._source!==a.portrait){const p=new Image();portraits[a.id]=p;p._source=a.portrait;p.onload=draw;p.src=a.portrait}});
  if(imageId!==args.background?.id){imageId=args.background?.id||'';image=null;if(args.background){image=new Image();image.onload=draw;image.src=args.background.src}}
- if(epoch!==args.epoch){epoch=args.epoch;chosen=null;calibrationPoints=[]}if(viewEpoch!==(args.view_epoch||args.epoch)){viewEpoch=args.view_epoch||args.epoch;fit()}
+ if(epoch!==args.epoch){epoch=args.epoch;chosen=null;calibrationPoints=[]}if(viewEpoch!==(args.view_epoch||args.epoch)){viewEpoch=args.view_epoch||args.epoch;fit(['calibrate','wall','view'].includes(args.mode))}
  const abilities=document.querySelector('#abilities');abilities.replaceChildren();(args.palette||[]).forEach(a=>{const b=document.createElement('button');b.textContent=a.name+' · '+a.mana+' MP'+(a.cd?' · КД '+a.cd:'');b.disabled=Boolean(a.reason);b.title=a.reason||a.name;b.className=a.id===args.active_ability?'selected':'';b.onclick=()=>send('streamlit:setComponentValue',{value:{epoch:args.epoch,ability:a.id},dataType:'json'});abilities.append(b)});abilities.hidden=!(args.palette||[]).length;
- document.querySelector('#reset').hidden=args.mode!=='calibrate';document.querySelector('#location').hidden=!args.background;
- document.querySelector('#fit').textContent=args.mode==='calibrate'?'Всё изображение':'Все участники';draw();
+ document.querySelector('#reset').hidden=!['calibrate','wall'].includes(args.mode);document.querySelector('#location').hidden=!args.background;
+ document.querySelector('#fit').textContent=['calibrate','wall','view'].includes(args.mode)?'Всё изображение':'Все участники';draw();
  const legend=document.querySelector('#legend');legend.replaceChildren();
  (args.actors||[]).forEach((a,i)=>{const label=document.createElement('button');label.textContent=(a.active?'▶ ':'')+(i+1)+'. '+a.name+' · '+a.hp+'/'+a.hp_max+(a.effects?.length?' ◆':'');label.style.padding='4px 7px';label.title=(a.effects||[]).join(', ');label.onclick=()=>{if(args.mode==='target')send('streamlit:setComponentValue',{value:{epoch:args.epoch,target:a.id},dataType:'json'})};label.style.color=a.enemy?'#ed9daa':'#91c5a6';legend.append(label)});
  send('streamlit:setFrameHeight',{height:document.body.scrollHeight});

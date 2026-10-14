@@ -36,9 +36,9 @@ with TemporaryDirectory() as folder:
    with patch.object(board,'_component',side_effect=lambda **k:{'epoch':k['epoch'],'point':[20.,5.]}):
     app.radio(key='board_mode_ally').set_value('Перемещение').run();assert not app.exception
     app.button(key='map_apply_ally').click().run();assert not app.exception
-   actual=json.loads(save.read_text());assert actual['positions']==d['positions']
-   assert actual['player_requests'][-1]['destination']==[20.,5.]
-print('Passed: map clicks select targets in both roles; no viewing writes; one shared area map; player movement only proposes and retains authoritative positions.')
+   actual=json.loads(save.read_text());assert actual['positions']['ally']==[20.,5.]
+   assert not actual['player_requests']
+print('Passed: map clicks select targets in both roles; no viewing writes; one shared area map; player movement applies directly.')
 # Wrong-turn availability is explained before proposal submission.
 with TemporaryDirectory() as folder:
  root=Path(folder);source=root/'kalista_app.py';source.write_text(Path(__file__).with_name('kalista_app.py').read_text());save=root/'kalista_save.json';d,s=fresh();e.start_combat(d);save.write_text(json.dumps(d,ensure_ascii=False))
