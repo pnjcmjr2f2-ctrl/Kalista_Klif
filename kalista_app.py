@@ -808,17 +808,6 @@ def render_movement(data,source_token,target_token,player_mode=False):
         used=sum(x['source']==source_token and x.get('counts',True) for x in data.get('turn_actions',[]))
         st.caption(f'Действия: {max(0,2-used)}/2 · Перемещение: '+('использовано' if source.get('movement_used') else 'доступно'))
     st.caption('Дистанция до цели: '+(f'{separation(data,source_token,target_token):.1f} м · ' if data.get('distance_mode')=='meters' else '')+distance_between(data,source_token,target_token))
-    with st.container(key='movement_controls'):
-        cols=st.columns(2)
-        for index,rule in enumerate(('move_close','move_far')):
-            action=next((a for a in source.get('actions',[]) if a.get('rule')==rule),None)
-            if action and cols[index].button(action['name'],key=f'move_{source_token}_{rule}',disabled=source_token==target_token or (data.get('distance_mode')=='meters' and rule=='move_close' and separation(data,source_token,target_token)<=5) or source[hp_fields(source)[0]]<=0 or any(x['kind']=='fear' for x in source.get('effects',[])) or (data['combat_active'] and source.get('movement_used',False))):
-                try:
-                    if player_mode:submit_player_action(data,action['id'],[target_token],False);st.success('Перемещение предложено ведущему')
-                    else:
-                        for message in perform_action(data,source_token,action['id'],[target_token]):log(message)
-                        persist_and_rerun('Перемещение')
-                except (ValueError,OSError) as exc:st.error(str(exc))
 
 
 def render_battle(data):

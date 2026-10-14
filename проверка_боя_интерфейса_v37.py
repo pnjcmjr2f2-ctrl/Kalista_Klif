@@ -18,9 +18,8 @@ with TemporaryDirectory() as directory:
  app.selectbox(key='action_choice_ally').set_value(attack).run();assert app.multiselect(key='action_targets_ally_'+attack).value==['enemy:2']
  assert json.loads(save.read_text())==d
  app.radio(key='player_section').set_value('Обзор').run();app.radio(key='player_section').set_value('Бой').run();assert app.selectbox(key='player_battle_target').value=='enemy:2'
- app.button(key='move_ally_move_close').click().run();assert not app.exception
- actual=json.loads(save.read_text());assert actual['player_requests'][-1]['victims']==['enemy:2'] and actual['player_requests'][-1]['status']=='pending'
- assert actual['enemies'][1]['hp']==2000
+ assert not any(x.key in ('move_ally_move_close','move_ally_move_far') for x in app.button)
+ assert json.loads(save.read_text())==d
  # Main target follows selection; extra targets persist through unrelated reruns.
  app.multiselect(key='action_targets_ally_'+attack).set_value(['enemy:1','enemy:2']).run();app.run();assert app.multiselect(key='action_targets_ally_'+attack).value==['enemy:1','enemy:2']
  app.selectbox(key='player_battle_target').set_value('enemy:1').run();assert app.multiselect(key='action_targets_ally_'+attack).value==['enemy:1']
