@@ -46,6 +46,8 @@ def apply_loadout(enemy, role):
     enemy['enemy_role'] = role
     customize_race(enemy)
     configure_procs(enemy)
+    from kalista_skills import distribute
+    distribute(enemy)
     enemy.setdefault('critical_chance', 5.)
     enemy.setdefault('critical_multiplier', 2.)
     if role in ('Маг','Лекарь','Некромант') and not enemy.get('mana_max'):

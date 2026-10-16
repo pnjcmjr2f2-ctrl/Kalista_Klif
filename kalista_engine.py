@@ -180,6 +180,9 @@ def recalc(d):
     d["evasion_chance"]=min(.5,max(0,agi*.005))
     d["ritual_bonus"]=wis/5/100
     d["fear_power"]=cha/3/100
+    if "ally" in d and "spells" in d:
+        from kalista_skills import initialize
+        initialize(d)
 
 
 def gen_enemy(level, size, elite, boss=False, strength=1.0):
@@ -243,7 +246,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -502,7 +505,17 @@ def migrate(saved):
         for action in data['ally'].get('actions',[]):
             if action.get('kind')=='damage' and action.get('shared_attack') and action.get('damage_type')=='Физический':
                 action.setdefault('hit_effect',dict(kind='bleed',chance=25,duration=3,value=10))
-    data["schema_version"] = 30
+    if saved.get('schema_version',5)<31:
+        data['ally']['actions']=[a for a in data['ally'].get('actions',[]) if a['name'] not in ('Видящий','Лечение')]
+        for a in data['ally']['actions']:
+            if a['name']=='Скорострел':a['multiplier']=.7
+        if data['ally'].get('sheet_profile'):
+            data['ally']['sheet_profile']['abilities']='\n'.join(line for line in data['ally']['sheet_profile'].get('abilities','').splitlines() if not line.startswith('Видящий'))
+        from kalista_skills import distribute
+        for enemy in data['enemies']:distribute(enemy)
+    from kalista_skills import initialize
+    initialize(data)
+    data["schema_version"] = 31
     return data
 
 
@@ -628,7 +641,7 @@ def effective_defense(target, damage_type):
     resist = target.get("resists", {}).get(damage_type, 0)
     # Сохраняем прежнее числовое правило Тени: +20 пунктов, с пределом 95.
     if target.get("ten_resist_boost", 0) > 0:
-        resist = min(95, resist + 20)
+        resist = min(95, resist + 20 + target.get("passives",{}).get("shadow_child",{}).get("skill_rank",1)-1)
     return max(-100,min(95,resist + sum(effect["value"] for effect in target.get("effects", [])
                               if effect["kind"] == "resist" and effect["element"] == damage_type)))
 
@@ -648,7 +661,10 @@ def damage_preview(target, amount, damage_type="Физический", final=Fal
         protected = round(incoming * .9)
         racial_reduction = incoming - protected
         incoming = protected
-    if apply_stance and target.get('defensive_stance'):incoming=round(incoming*.7)
+    if apply_stance and target.get('defensive_stance'):
+        from kalista_skills import rank
+        stance=next((a for a in target.get('actions',[]) if a.get('rule')=='stance'),{})
+        incoming=round(incoming*(1-(30+rank(stance)-1)/100))
     capacity = sum(effect["value"] for effect in target.get("effects", []) if effect["kind"] == "shield")
     absorbed = 0 if bypass_shields else min(incoming, capacity)
     hp_key, _ = hp_fields(target)
@@ -713,7 +729,7 @@ def tick_mana_regeneration(data):
         ticks = 3
         data["mana_reserve_armed"] = False
         messages.append("Магический резерв активирован: 3 усиленных восстановления")
-    amount = round(data["mana_regen"] * 1.5) if ticks else data["mana_regen"]
+    amount = round(data["mana_regen"] * (1.5+.025*(data["passives"].get("mana_reserve",{}).get("skill_rank",1)-1))) if ticks else data["mana_regen"]
     restored = restore_mana(data, amount)
     data["mana_reserve_ticks"] = max(0, ticks - 1)
     messages.append(f"Регенерация маны: +{restored} MP" +
@@ -885,11 +901,15 @@ def spell_action(spell):
 
 
 def shadow_shield_amount(data):
-    return round(total_stat(data,'Интеллект')*(1+data.get('spell_power',0)))
+    from kalista_skills import rank
+    shield=next((a for a in data['spells'] if a['name']=='Покров тьмы'),{})
+    return round(total_stat(data,'Интеллект')*(1+data.get('spell_power',0))*(1+.045*(rank(shield)-1)))
 
 
 def outgoing_damage(source,amount,damage_type):
-    amount=round(amount*2) if source.get('eye_damage_boost') else amount
+    from kalista_skills import rank
+    eye=next((a for a in source.get('actions',[]) if a.get('rule')=='eye'),{})
+    amount=round(amount*(2+.05*(rank(eye)-1))) if source.get('eye_damage_boost') else amount
     return round(amount*.65) if damage_type=='Физический' and any(e['kind']=='weakness' for e in source.get('effects',[])) else amount
 
 
@@ -902,11 +922,14 @@ def roll_spell_effects(data,spell,target,hit_amount=None):
     if spell_action(spell)!='damage' or target[hp_fields(target)[0]]<=0:return []
     from kalista_statuses import on_hit
     extra=on_hit(target,spell,hit_amount or spell_raw(spell["base"],data.get("spell_power",0)),data["round"])
+    from kalista_skills import rank
+    sr=rank(spell);tier=int(sr>=5)+int(sr>=10)
+    dot_factor=1+.2*(sr-1)
     rolls=[]
     if 'Огонь' in spell['school']:
-        rolls.append(('dot','Горение',kalista_dot_damage(data,'burn'),'Огонь',3,.5,'burn'))
+        rolls.append(('dot','Горение',round(kalista_dot_damage(data,'burn')*dot_factor),'Огонь',3+tier,.5+.1*tier,'burn'))
     if 'Тьма' in spell['school']:
-        rolls.extend([('dot','Проклятие',kalista_dot_damage(data,'curse'),'Тьма',3,.5,'curse'),('weakness','Слабость',35,'Тьма',2,.35,'weakness')])
+        rolls.extend([('dot','Проклятие',round(kalista_dot_damage(data,'curse')*dot_factor),'Тьма',3+tier,.5+.1*tier,'curse'),('weakness','Слабость',35,'Тьма',2,.35,'weakness')])
     if spell['name'] in ('Разряд бездны','Пламя души'):
         chance=.5*(1-min(.9,max(0,target.get('control_resist',0))))
         rolls.append(('fear','Страх',0,'Тьма',2,chance,'fear'))
@@ -937,7 +960,7 @@ def spell_damage_preview(data,spell,target,raw,final_damage=None):
     for element in schools:
         part=raw/len(schools)
         defense=effective_defense(target,element)
-        if element=='Огонь' and data.get('pepel_empower'):defense*=.7
+        if element=='Огонь' and data.get('pepel_empower'):defense*=1-(.30+.01*(data["passives"]["ash_lady"].get("skill_rank",1)-1))
         reduced=max(0,part*(1-defense/100))
         if element=='Тьма' and 'dark_resist' in target.get('passives',{}):
             racial_reduction+=reduced*.1;reduced*=.9
@@ -985,7 +1008,8 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
         if amount == 0:
             raise ValueError("Укажи силу щита: в исходных правилах её значение не задано")
     if action == "heal":
-        amount = spell.get("effect_value", 0)
+        from kalista_skills import factor
+        amount = round(spell.get("effect_value", 0)*factor(spell))
         nonnegative_int(amount, "Лечение")
         if amount == 0:
             raise ValueError("Укажи величину лечения выше 0")
@@ -999,7 +1023,8 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
                   "source": f"spell:{spell['id']}", "desc": spell.get("desc", "")}
         validate_effect(effect)
     dual, soul = spell_bonuses(data, spell)
-    raw = spell_raw(amount, data.get("spell_power", 0), dual, soul) if action == "damage" else amount
+    from kalista_skills import spell_damage
+    raw = spell_damage(data,spell,dual,soul) if action == "damage" else amount
     if crit and action == "damage":
         raw = round(raw * 1.5)
     empowered=bool(data.get('pepel_empower') and 'Огонь' in spell['school'] and action=='damage' and raw>0 and spell['name']!='Теневой укол')
@@ -1213,7 +1238,7 @@ def activate_special(data, key):
 
 
 def effective_crit_chance(data):
-    return min(1.0, max(0.0, data.get("crit_chance", .065) + (.10 if data.get("crit_boost_active") else 0)))
+    return min(1.0, max(0.0, data.get("crit_chance", .065) + (.10+.005*(data["passives"]["cold_calculation"].get("skill_rank",1)-1) if data.get("crit_boost_active") else 0)))
 
 
 def start_combat(data):
@@ -1339,7 +1364,7 @@ def imported_friend():
     ally['counterattack_enabled']=True
     ensure_player_sheet(ally)
     fill_warrior_equipment(ally)
-    profile['abilities']='Видящий — позволяет видеть суть вещей.\nСкорострел — две атаки мечом за одно действие.\nКонтратака — 65% после потери HP от прямого ближнего удара; обычный удар мечом без расхода действий.\nДесница Ока — +100% урона до конца текущего хода, один раз за бой.'
+    profile['abilities']='Скорострел — два удара по 70% атаки за одно действие.\nКонтратака — 65% после потери HP от прямого ближнего удара; обычный удар мечом без расхода действий.\nДесница Ока — +100% урона до конца текущего хода, один раз за бой.'
     return ally
 
 
@@ -1544,7 +1569,7 @@ def movement_actions():
 
 
 def friend_actions():
-    return [action_template('Удар оружием',shared_attack=True),action_template('Скорострел',hits=2,shared_attack=True,description='Две атаки мечом за одно действие; отдельные проверки уклонения, защиты и щитов.'),action_template('Видящий',kind='note',description='Позволяет видеть суть вещей. Числовой боевой эффект не задан.')] + warrior_actions() + movement_actions()
+    return [action_template('Удар оружием',shared_attack=True),action_template('Скорострел',hits=2,shared_attack=True,multiplier=.7,description='Два удара по 70% атаки за одно действие; отдельные проверки уклонения, защиты и щитов.')] + warrior_actions() + movement_actions()
 
 
 def fill_warrior_equipment(ally):
@@ -1712,12 +1737,15 @@ def action_amount(source, action, critical=False):
     if critical:
         if action['kind'] != 'damage' or not source.get('sheet_profile') or not action['shared_attack']:
             raise ValueError('Критический урон для этого действия не задан')
-        return round(source['sheet_profile']['critical_damage'])
+        from kalista_skills import factor
+        return round(source['sheet_profile']['critical_damage']*factor(action))
     if action['shared_attack']:
-        return round(source['sheet_profile']['attack']) if source.get('sheet_profile') else source.get('attack_damage',0)
+        from kalista_skills import factor
+        return round((source['sheet_profile']['attack'] if source.get('sheet_profile') else source.get('attack_damage',0))*factor(action))
     amount=action['amount']
     if action['kind']=='damage' and action['damage_type']!='Физический':amount=round(amount*(1+source.get('spell_power',0)))
-    return amount
+    from kalista_skills import factor
+    return round(amount*factor(action))
 
 
 def check_action_limit(data, source_token, reaction=False):
@@ -1737,10 +1765,12 @@ def record_turn_action(data, source_token, name, target, result, counts=True):
 
 
 def action_damage_factor(target, action):
-    if action['damage_type']=='Физический' and action.get('armor_penetration'):
-        armor=effective_defense(target,'Физический')
-        return max(0,armor-action['armor_penetration'])/armor if armor else 1.0
-    return 1.0
+    if action['damage_type']!='Физический':return 1.0
+    from kalista_skills import rank
+    r=rank(action)
+    percent=(.5 if r>=10 else .3 if r>=5 else .15) if action['name']=='Мощный удар' else (.1 if r>=10 and action['name']=='Скорострел' else 0)
+    armor=effective_defense(target,'Физический')
+    return max(0,armor*(1-percent)-action.get('armor_penetration',0))/armor if armor else 1.0
 
 
 def preview_action(data, source_token, action, token, critical=False, manual_amount=None,area_center=None):
@@ -1862,15 +1892,23 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
             messages.append(f"{source['name']} → {target['name']}: {action['name']}")
         if not rule and (action['kind']!='damage' or landed) and (action['kind'] == 'note' or action['effect_kind'] != 'note'):
             kind=action['effect_kind']
+            from kalista_skills import rank
+            ar=rank(action);tier=int(ar>=5)+int(ar>=10)
+            effect_value=round(action['effect_value']*(1+.2*(ar-1))) if kind=='dot' else action['effect_value']
+            effect_duration=(action['duration']+tier if kind=='dot' else action['duration']) or None
             existing=[e for e in target['effects'] if e.get('source') == action['id']]
-            chance=action.get('effect_chance',100)/100
+            chance=min(100,action.get('effect_chance',100)+(10 if kind=='dot' else 5)*tier)/100
             if kind in ('fear','freeze'):chance*=1-min(.9,max(0,target.get('control_resist',0)))
             if not simulation and chance<1 and random.random()>=chance:
                 messages.append(f"{target['name']}: эффект не сработал ({chance*100:g}%)")
             elif kind in ('fear','freeze') and target.get('fear_immunity_turns',0)>0:
                 messages.append(f"{target['name']}: страх не наложен — иммунитет")
+            elif kind=='dot' and existing:
+                existing[0]['value']=max(existing[0]['value'],effect_value)
+                existing[0]['duration']=effect_duration
+                messages.append(f"{target['name']}: периодический эффект обновлён")
             elif len(existing) < action['max_stacks']:
-                add_effect(target, dict(kind=kind,name=action['name'],value=action['effect_value'],duration=action['duration'] or None,
+                add_effect(target, dict(kind=kind,name=action['name'],value=effect_value,duration=effect_duration,
                                        element=action['effect_element'],source=action['id'],desc=action['description']), candidate['round'] if candidate['combat_active'] else 0, stack=True)
                 messages.append(f"{target['name']}: эффект {action['name']}")
             else: messages.append(f"{target['name']}: достигнут предел стаков")

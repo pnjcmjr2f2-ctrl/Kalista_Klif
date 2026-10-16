@@ -19,7 +19,7 @@ def cast_area_spell(data,spell,center,final_damage=None):
     center=check_area_aim(candidate,'player',spell,center)
     tokens=shape_targets(candidate,'player',spell,center)
     if not tokens:raise ValueError('В области нет живых целей')
-    dual,soul=e.spell_bonuses(candidate,spell);raw=e.spell_raw(spell['base'],candidate.get('spell_power',0),dual,soul)
+    dual,soul=e.spell_bonuses(candidate,spell);raw=__import__('kalista_skills').spell_damage(candidate,spell,dual,soul)
     empowered=bool(candidate.get('pepel_empower') and 'Огонь' in spell['school'] and raw>0 and spell['name']!='Теневой укол')
     for token in tokens:e.spell_damage_preview(candidate,spell,e.participant(candidate,token),raw,final_damage)
     e.observe_mana_reserve(candidate);candidate['mana_current']-=spell['mana'];spell['cd_left']=spell.get('cd_max',0);candidate['last_school']=spell['school']

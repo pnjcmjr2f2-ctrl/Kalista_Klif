@@ -21,7 +21,7 @@ double=next(a for a in d['ally']['actions'] if a['name']=='Скорострел'
 preview=e.preview_action(d,'ally',double,'enemy:1')
 before=d['enemies'][0]['hp'];e.perform_action(d,'ally',double['id'],['enemy:1'])
 assert before-d['enemies'][0]['hp']==preview['hp_min']==preview['hp_max'] and len(d['turn_actions'])==1
-assert d['enemies'][0]['hp']==before-2*e.real_dmg(302,185)
+assert d['enemies'][0]['hp']==before-2*e.real_dmg(round(302*.7),185)
 bad=deepcopy(d)
 try:e.perform_action(d,'ally',double['id'],['enemy:1','enemy:999'])
 except ValueError:pass

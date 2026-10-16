@@ -15,7 +15,7 @@ def show_spell_damage(data,spell):
     kind=e.spell_action(spell)
     if kind=='damage':
         dual,soul=e.spell_bonuses(data,spell)
-        damage=e.spell_raw(spell['base'],data.get('spell_power',0),dual,soul)
+        damage=__import__('kalista_skills').spell_damage(data,spell,dual,soul)
         critical=round(damage*1.5)
         st.markdown(f"**Урон: {damage} · при крите: {critical}**")
         st.caption(f"База {spell['base']} · сила заклинаний +{data.get('spell_power',0)*100:g}% · до защиты цели"+(' · на каждую цель' if spell.get('area_radius_m') or spell.get('area_shape')=='cone' else ''))
@@ -23,8 +23,10 @@ def show_spell_damage(data,spell):
         elif spell['school']=='Огонь+Тьма':st.caption(f"Огонь {damage/2:g} + Тьма {damage/2:g}; сопротивления считаются отдельно.")
         else:st.caption('Стихия: '+spell['school'])
         if dual or soul:st.caption('В расчёте активны: '+', '.join((['Двойное пламя'] if dual else [])+(['Ритуал Чёрного Пламени'] if soul else [])))
-        if 'Огонь' in spell['school']:st.caption(f"Горение: {e.kalista_dot_damage(data,'burn')} за тик × 3, шанс 50%; до сопротивления Огню.")
-        if 'Тьма' in spell['school']:st.caption(f"Проклятие: {e.kalista_dot_damage(data,'curse')} за тик × 3, шанс 50%; до сопротивления Тьме.")
+        from kalista_skills import rank
+        sr=rank(spell);tier=int(sr>=5)+int(sr>=10);df=1+.2*(sr-1)
+        if 'Огонь' in spell['school']:st.caption(f"Горение: {round(e.kalista_dot_damage(data,'burn')*df)} за тик × {3+tier}, шанс {50+10*tier}%; до сопротивления Огню.")
+        if 'Тьма' in spell['school']:st.caption(f"Проклятие: {round(e.kalista_dot_damage(data,'curse')*df)} за тик × {3+tier}, шанс {50+10*tier}%; до сопротивления Тьме.")
     elif kind=='shield':
         value=e.shadow_shield_amount(data) if spell['name']=='Покров тьмы' else spell.get('effect_value',0)
         st.markdown(f'**Щит: {value}**')

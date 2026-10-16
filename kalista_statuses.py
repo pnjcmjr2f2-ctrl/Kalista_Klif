@@ -36,6 +36,12 @@ def validate_proc(ability):
 def on_hit(target,ability,raw,round_number=0):
     from kalista_engine import add_effect,hp_fields
     proc=ability.get('hit_effect')
+    if proc:
+        from kalista_skills import rank
+        proc=dict(proc);r=rank(ability);tier=int(r>=5)+int(r>=10)
+        if proc['kind'] in ('bleed','burn','curse'):
+            proc['duration']+=tier
+            proc['chance']=min(100,proc['chance']+(5 if proc['kind']=='bleed' else 10)*tier)
     if not proc or proc['kind']=='none' or target[hp_fields(target)[0]]<=0:return []
     kind=proc['kind'];name=PRESETS[kind][0]
     if kind=='bleed' and (target.get('bloodless') or any(w in target.get('race','').casefold() for w in ('скелет','лич','нежить','голем'))):return [name+': цель невосприимчива']

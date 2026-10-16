@@ -24,7 +24,7 @@ for center in ([80.001,0],[float('nan'),0]):
  assert d==before
 # Each target receives its own full hit; crits and burn rolls are independent.
 d['ally']['counterattack_enabled']=False;d['enemies'][0]['resists']['Огонь']=50
-mp=d['mana_current'];raw=e.spell_raw(80,d['spell_power']);burn=e.kalista_dot_damage(d,'burn')
+mp=d['mana_current'];raw=e.spell_raw(s['base'],d['spell_power']);burn=e.kalista_dot_damage(d,'burn')
 with patch.object(e.random,'random',side_effect=[.99,.99, .0,.0, .99,.99]):cast_area_spell(d,s,[40,0])
 assert d['mana_current']==mp-35 and len([a for a in d['turn_actions'] if a['counts']])==1
 assert next(s for s in d['spells'] if s['name']=='Огненный шар')['cd_left']==1
@@ -37,7 +37,7 @@ assert not d['enemies'][1]['effects']
 d,s=fresh();d['enemies']=[dict(d['enemies'][0],id=i,name='Цель '+str(i),resists={el:95 if el=='Огонь' else 0 for el in e.ELEMENTS},effects=[]) for i in range(1,26)]
 ensure_positions(d)
 for a in d['enemies']:d['positions']['enemy:'+str(a['id'])]=[45.,0.]
-d['pepel_empower']=True;raw=e.spell_raw(80,d['spell_power'])
+d['pepel_empower']=True;raw=e.spell_raw(s['base'],d['spell_power'])
 with patch.object(e.random,'random',return_value=.99):cast_area_spell(d,s,[40,0])
 expected=round(raw*(1-.95*.7));assert all(a['hp']==2000-expected for a in d['enemies'])
 assert not d['pepel_empower'] and d['mana_current']==2950-35

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v46 · полный лист игрока
+Калиста Клиф — v48 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -36,7 +36,7 @@ from kalista_engine import (
     recalc_equip, refresh_turn_order, register_enemy, restore_mana,
     return_to_queue, scene_player_text, scene_record, set_initiative, set_manual_turn,
     shadow_shield_amount, special_availability, spell_action, spell_bonuses, spell_damage_preview,
-    spell_raw, start_combat, tick_periodic, tick_round_effects, total_stat,
+    start_combat, tick_periodic, tick_round_effects, total_stat,
     update_npc, update_scene, use_item, validate_action_state, visible_battle_participants,
     xp_needed
 )
@@ -325,7 +325,7 @@ def render_selected_spell(data, target, selected_id=None):
     if data.get('distance_mode')=='meters' and is_area(spell):
         render_area_spell(data,spell,target);render_spell_extras(data);return
     dual, soul = spell_bonuses(data, spell)
-    raw = spell_raw(spell["base"], data.get("spell_power", 0), dual, soul) if action == "damage" else spell.get("effect_value", 0)
+    raw = __import__("kalista_skills").spell_damage(data,spell,dual,soul) if action == "damage" else spell.get("effect_value", 0)
     st.caption(f"Мана {spell['mana']} · КД {spell.get('cd_left', 0)}/{spell.get('cd_max', 0)}")
     bonuses = (["Двойное пламя +5%"] if dual else []) + (["Ритуал +40%"] if soul else [])
     if bonuses: st.caption("Прямой урон: " + " · ".join(bonuses))
@@ -802,7 +802,7 @@ def render_area_spell(data,spell,target):
     show_spell_damage(data,spell)
     token=next(t for t,a in participants(data) if a is target)
     center,tokens,problem=render_area_selection(data,'player',spell,token,'spell_area_'+str(spell['id']))
-    dual,soul=spell_bonuses(data,spell);raw=spell_raw(spell['base'],data['spell_power'],dual,soul)
+    dual,soul=spell_bonuses(data,spell);raw=__import__('kalista_skills').spell_damage(data,spell,dual,soul)
     st.caption(f"Мана {spell['mana']} · КД {spell.get('cd_left',0)}/{spell.get('cd_max',0)} · одно действие")
     for t in tokens:
         a=participant(data,t);preview=spell_damage_preview(data,spell,a,raw)
@@ -1621,7 +1621,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 30:
+if data.get("schema_version", 5) < 31:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1698,6 +1698,9 @@ def apply_view_special(key):
 def apply_view_equip(item_id):
     equip_root_reserve(data,item_id);persist_and_rerun('Смена снаряжения')
 
+if page=='Заклинания':
+    from kalista_skills import render as render_skill_progress
+    render_skill_progress(data,'player',SAVE_FILE)
 if gm_view(page,data,apply_view_item,apply_view_special,apply_view_equip,persist_and_rerun):st.stop()
 
 # ===================== ОБЗОР =====================

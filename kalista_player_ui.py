@@ -321,6 +321,9 @@ def action_form(root,action,expected):
 def render_section(section,data,root):
     if not data['ally'].get('sheet_profile'):st.info('Ведущему нужно загрузить лист персонажа в «Отряде».');return
     refresh_button()
+    if section=='Заклинания и способности':
+        from kalista_skills import render as render_skill_progress
+        render_skill_progress(data,'ally',root/'kalista_save.json')
     if player_view(section,data,root,commit):return
     if section=='Обзор':overview(data,root)
     elif section=='Снаряжение':equipment(data,root)

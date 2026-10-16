@@ -7,7 +7,7 @@ def fresh():
  d['enemies']=[dict(id=1,name='Цель',level=21,hp=5000,hp_max=5000,armor=0,resists={x:0 for x in e.ELEMENTS},effects=[],initiative=1,attack_damage=10,attack_type='Физический')];return e.migrate(d)
 d=fresh();a=next(x for x in d['ally']['actions'] if x['name']=='Скорострел')
 with patch.object(e.random,'random',side_effect=[.99,.01,.99,.99]):messages=e.perform_action(d,'ally',a['id'],['enemy:1'])
-assert d['enemies'][0]['hp']==5000-655-302 and sum('КРИТ' in m for m in messages)==1
+assert d['enemies'][0]['hp']==5000-round(655*.7)-round(302*.7) and sum('КРИТ' in m for m in messages)==1
 before=deepcopy(d)
 try:e.perform_action(d,'ally',a['id'],['enemy:1'],critical=True)
 except ValueError:pass
