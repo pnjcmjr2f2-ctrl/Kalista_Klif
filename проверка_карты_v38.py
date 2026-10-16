@@ -26,7 +26,7 @@ for center in ([80.001,0],[float('nan'),0]):
 d['ally']['counterattack_enabled']=False;d['enemies'][0]['resists']['Огонь']=50
 mp=d['mana_current'];raw=e.spell_raw(s['base'],d['spell_power']);burn=e.kalista_dot_damage(d,'burn')
 with patch.object(e.random,'random',side_effect=[.99,.99, .0,.0, .99,.99]):cast_area_spell(d,s,[40,0])
-assert d['mana_current']==mp-35 and len([a for a in d['turn_actions'] if a['counts']])==1
+assert d['mana_current']==mp-s['mana'] and len([a for a in d['turn_actions'] if a['counts']])==1
 assert next(s for s in d['spells'] if s['name']=='Огненный шар')['cd_left']==1
 assert d['ally']['hp']==440-round(raw*.9)
 assert d['enemies'][0]['hp']==2000-round(round(raw*1.5)*.5)
@@ -40,7 +40,7 @@ for a in d['enemies']:d['positions']['enemy:'+str(a['id'])]=[45.,0.]
 d['pepel_empower']=True;raw=e.spell_raw(s['base'],d['spell_power'])
 with patch.object(e.random,'random',return_value=.99):cast_area_spell(d,s,[40,0])
 expected=round(raw*(1-.95*.7));assert all(a['hp']==2000-expected for a in d['enemies'])
-assert not d['pepel_empower'] and d['mana_current']==2950-35
+assert not d['pepel_empower'] and d['mana_current']==2950-s['mana']
 # A defeated character cannot retaliate, including friendly fire.
 d,s=fresh();d['ally']['hp']=0;assert e.counterattack(d,'player','ally',{'hp_loss':1})==[]
 # Melee 5m boundary; exact 30m free movement once per turn, no action use.
@@ -86,6 +86,6 @@ with TemporaryDirectory() as directory:
    assert json.loads(save.read_text())==d,'Viewing metric map changed save'
    if role=='gm' and not editing:
     app.button(key='cast_area_'+str(s['id'])).click().run();assert not app.exception
-    actual=json.loads(save.read_text());assert actual['mana_current']==d['mana_current']-35
+    actual=json.loads(save.read_text());assert actual['mana_current']==d['mana_current']-s['mana']
     assert len([x for x in actual['turn_actions'] if x['counts']])==1
 print('Passed: 80m cast / 10m area boundaries, full independent hits, resistances and crit/DoT rolls, one cost/action/CD, 5m melee, 30m movement, no second move, no self counter, skill areas and metric UI both roles/modes.')
