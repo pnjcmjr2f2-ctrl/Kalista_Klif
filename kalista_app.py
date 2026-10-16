@@ -472,7 +472,7 @@ def render_participant_editor(data, token):
             maximum = c2.number_input("Максимум HP", min_value=1, value=target[maximum_key], disabled=token == "player")
             armor = st.number_input("Броня без временных эффектов", min_value=0, value=target.get("armor", 0))
             agility=st.number_input("Ловкость (для уклонения)",min_value=0,value=int(total_stat(target,"Ловкость") if token=="player" else target.get("sheet_profile",{}).get("stats",{}).get("Ловкость",target.get("agility",0))),disabled=token in ("player","ally"))
-            attack = st.number_input("Урон атаки", min_value=0, value=float(target["sheet_profile"]["attack"]) if target.get("sheet_profile") else target.get("attack_damage", target.get("phys_attack", 0)))
+            attack = st.number_input("Урон атаки", min_value=0.0, value=float(target["sheet_profile"]["attack"] if target.get("sheet_profile") else target.get("attack_damage", target.get("phys_attack", 0))))
             heal_amount = st.number_input("Сила лечения", min_value=0, value=target.get("heal_amount", 0), disabled=token == "player")
             use_mana = st.checkbox('Участник использует ману', value='mana_current' in target, disabled=token=='player')
             mana_max = st.number_input('Максимум маны участника',min_value=1,value=target.get('mana_max',1),disabled=token=='player' or not use_mana)
