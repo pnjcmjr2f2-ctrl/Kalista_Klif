@@ -11,11 +11,32 @@ def show_stats(values):
     cols=st.columns(3)
     for i,(key,value) in enumerate(values):cols[i%3].metric(key,value)
 
-def show_book(actions,spells=False):
+def show_spell_damage(data,spell):
+    kind=e.spell_action(spell)
+    if kind=='damage':
+        dual,soul=e.spell_bonuses(data,spell)
+        damage=e.spell_raw(spell['base'],data.get('spell_power',0),dual,soul)
+        critical=round(damage*1.5)
+        st.markdown(f"**Урон: {damage} · при крите: {critical}**")
+        st.caption(f"База {spell['base']} · сила заклинаний +{data.get('spell_power',0)*100:g}% · до защиты цели"+(' · на каждую цель' if spell.get('area_radius_m') or spell.get('area_shape')=='cone' else ''))
+        if spell['name']=='Теневой укол':st.caption('Чистый урон: броня и сопротивления не уменьшают; щит поглощает.')
+        elif spell['school']=='Огонь+Тьма':st.caption(f"Огонь {damage/2:g} + Тьма {damage/2:g}; сопротивления считаются отдельно.")
+        else:st.caption('Стихия: '+spell['school'])
+        if dual or soul:st.caption('В расчёте активны: '+', '.join((['Двойное пламя'] if dual else [])+(['Ритуал Чёрного Пламени'] if soul else [])))
+        if 'Огонь' in spell['school']:st.caption(f"Горение: {e.kalista_dot_damage(data,'burn')} за тик × 3, шанс 50%; до сопротивления Огню.")
+        if 'Тьма' in spell['school']:st.caption(f"Проклятие: {e.kalista_dot_damage(data,'curse')} за тик × 3, шанс 50%; до сопротивления Тьме.")
+    elif kind=='shield':
+        value=e.shadow_shield_amount(data) if spell['name']=='Покров тьмы' else spell.get('effect_value',0)
+        st.markdown(f'**Щит: {value}**')
+    elif kind=='heal':st.markdown(f"**Лечение: {spell.get('effect_value',0)} HP**")
+
+
+def show_book(actions,spells=False,data=None):
     for a in actions:
         if a.get('rule') in ('move_close','move_far','move_point'):continue
         with st.expander(a['name']+' · '+e.reach_label(a)):
             st.write(a.get('desc',a.get('description','')))
+            if spells and data is not None:show_spell_damage(data,a)
             mana=a.get('mana',a.get('mana_cost',0));cd=a.get('cd_left',a.get('cooldown_left',0));maximum=a.get('cd_max',a.get('cooldown',0))
             st.caption(f'Мана {mana} · Перезарядка {cd}/{maximum}')
             if a.get('range_m') is not None:st.caption(f"Дальность {a['range_m']:g} м")
@@ -172,7 +193,7 @@ def gm_view(page,data,apply_item,apply_special=None,apply_equip=None,persist=Non
     if editing() or page not in ('Экипировка','Инвентарь','Характеристики','Заклинания','Квесты','Ведущий'):return False
     st.subheader(page)
     selected=st.selectbox('Редкость предметов',['Все']+list(e.RARITIES),key='root_view_rarity_'+page) if page in ('Экипировка','Инвентарь') else 'Все'
-    if page=='Заклинания':show_book(data['spells'],True)
+    if page=='Заклинания':show_book(data['spells'],True,data)
     elif page=='Характеристики':
         show_stats([(n,e.total_stat(data,n)) for n in data['base_stats']]);st.caption(f"Уровень {data['level']} · Свободные очки {data['free_points']}")
         show_stats([('Броня',data['armor']),('Сила заклинаний',f"+{data['spell_power']*100:.0f}%"),('Инициатива',data['initiative'])])

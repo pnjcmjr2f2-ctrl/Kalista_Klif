@@ -318,6 +318,8 @@ def render_selected_spell(data, target, selected_id=None):
                             format_func=lambda value: f"{spells[value]['name']} · {reach_label(spells[value])} · {spells[value]['mana']} MP" +
                             (f" · КД {spells[value]['cd_left']}" if spells[value]['cd_left'] else ""))
     spell = spells[sid]
+    from kalista_view import show_spell_damage
+    if not (data.get('distance_mode')=='meters' and is_area(spell)):show_spell_damage(data,spell)
     action = spell_action(spell)
     target_token=next((t for t,v in participants(data) if v is target),None)
     if data.get('distance_mode')=='meters' and is_area(spell):
@@ -796,6 +798,8 @@ def render_area_selection(data,source,ability,target,prefix):
 
 def render_area_spell(data,spell,target):
     from kalista_area import cast_area_spell
+    from kalista_view import show_spell_damage
+    show_spell_damage(data,spell)
     token=next(t for t,a in participants(data) if a is target)
     center,tokens,problem=render_area_selection(data,'player',spell,token,'spell_area_'+str(spell['id']))
     dual,soul=spell_bonuses(data,spell);raw=spell_raw(spell['base'],data['spell_power'],dual,soul)
@@ -1903,7 +1907,9 @@ elif page=="Заклинания":
     for i, sp in enumerate(list(data["spells"])):
         with st.expander(f"{sp.get('name','?')} · {reach_label(sp)} (КД {sp.get('cd_max',0)})"):
             st.write(sp.get('desc',''))
-            st.caption(f"{reach_label(sp)} · Мана {sp['mana']} · Урон {sp['base']} · КД {sp.get('cd_left',0)}/{sp.get('cd_max',0)}")
+            from kalista_view import show_spell_damage
+            show_spell_damage(data,sp)
+            st.caption(f"{reach_label(sp)} · Мана {sp['mana']} · База {sp['base']} · КД {sp.get('cd_left',0)}/{sp.get('cd_max',0)}")
             with st.expander('Изменить заклинание'):
                 sp["name"] = st.text_input("Название", sp.get("name",""), key=f"sn{sp['id']}")
                 c1, c2, c3, c4 = st.columns(4)
