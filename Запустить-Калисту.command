@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 task_python="../work/venv/bin/python"
 if [[ ! -x "$task_python" ]]; then task_python=".venv/bin/python"; fi
 if [[ ! -x "$task_python" ]]; then
-  echo "Сначала установи зависимости по инструкции Игра-v17.md."
+  echo "Сначала установи зависимости по инструкции Игра.md."
   exit 1
 fi
 "$task_python" kalista_setup.py

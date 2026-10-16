@@ -1,31 +1,45 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v43 · полный лист игрока
+Калиста Клиф — v44 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
 import streamlit as st
 from kalista_view import editing,gm_view
-from kalista_map import separation,ability_range,area_targets,check_point_range
+from kalista_map import separation,ability_range
 from kalista_shape_ui import edit_shape
 from kalista_shapes import is_area,check_area_aim,shape_targets,area_label
-from kalista_loot import settings as loot_settings,assign_loot,equip_root_reserve,DEFAULT_CHANCES,WEIGHTS
+from kalista_loot import settings as loot_settings,assign_loot,equip_root_reserve,DEFAULT_CHANCES
 import json
 import random
-import os
-import tempfile
-import shutil
 import math
-from uuid import uuid4
 from html import escape
 from datetime import datetime
 from pathlib import Path
 from copy import deepcopy
 import hmac
-import secrets
 import time
 from kalista_storage import read_state, write_state, StaleState, create_snapshot, list_snapshots, restore_snapshot, undo_entries
-from kalista_engine import *
+from kalista_engine import (
+    DAMAGE_TYPES, DEFAULT, EFFECT_KINDS, ELEMENTS, MAX_LEVEL,
+    RARITIES, action_amount, action_template, activate_scene, activate_shadow_invisibility,
+    activate_shadow_resistance, activate_special, actor_target, actor_token, add_effect,
+    add_history, add_npc_to_battle, advance_turn, apply_damage, apply_healing,
+    cast_spell, check_reach, combat_side, create_npc, create_scene,
+    damage_message, damage_preview, default_opponent, delete_npc, delete_scene,
+    distance_between, effect_lifetime, effective_crit_chance, effective_defense, end_combat,
+    evasion_chance, exclude_from_queue, exclude_from_queue_after_delete, gen_enemy, get_current_actor,
+    hp_fields, imported_friend, invalidate_player_requests, kalista_dot_damage, migrate,
+    move_in_queue, npc_battle_token, npc_record, observe_mana_reserve, participant,
+    participant_label, participants, perform_action, preview_action, public_player_state,
+    ranged_miss_chance, rarity_badge, rarity_label, reach_label, recalc,
+    recalc_equip, refresh_turn_order, register_enemy, restore_mana,
+    return_to_queue, scene_player_text, scene_record, set_initiative, set_manual_turn,
+    shadow_shield_amount, special_availability, spell_action, spell_bonuses, spell_damage_preview,
+    spell_raw, start_combat, tick_periodic, tick_round_effects, total_stat,
+    update_npc, update_scene, use_item, validate_action_state, visible_battle_participants,
+    xp_needed
+)
 from kalista_theme import THEME
 from kalista_text import readable_rules
 from kalista_battle_readout import effect_label,render_recent_results
@@ -145,8 +159,8 @@ def render_effect_editor(data, token):
     if not editing():return
     target = participant(data, token)
     st.markdown("**Эффекты выбранного участника**")
-    st.caption("Урон и лечение: срабатывания в конце хода цели. Остальные: полные раунды; "
-               "раунд наложения не сокращает длительность. Вне боя эффекты меняются вручную.")
+    st.caption("Урон и лечение срабатывают в конце хода цели. Страх и слабость отсчитываются по личным ходам цели; остальные эффекты — по полным раундам. "
+               "Раунд наложения не сокращает длительность. Вне боя эффекты меняются вручную.")
     if not target.get("effects"):
         st.caption("Нет активных эффектов")
     visible = list(target.get("effects", []))
@@ -160,9 +174,7 @@ def render_effect_editor(data, token):
             visible = visible[page_index * 6:(page_index + 1) * 6]
         if not visible: st.caption("По запросу ничего не найдено")
     for effect in visible:
-        count = effect["duration"]
-        unit = "срабатыв." if effect["kind"] in ("dot", "hot") else "полных р."
-        lifetime = "бессрочно" if count is None else f"{count} {unit}"
+        lifetime = effect_label(effect).split(" · ",1)[-1]
         numeric = f" · {effect['value']}" if effect["kind"] != "note" else ""
         element = f" ({effect['element']})" if effect["kind"] in ("dot", "resist") else ""
         st.write(f"{effect['name']} — {EFFECT_KINDS[effect['kind']]}{numeric}{element} · {lifetime}")
@@ -322,7 +334,6 @@ def render_selected_spell(data, target, selected_id=None):
             shield_amount=shadow_shield_amount(data)
             st.caption(f'Щит = Интеллект × (1 + сила заклинаний) = {shield_amount}')
         else:shield_amount = st.number_input("Сила щита", min_value=0, value=spell.get("effect_value", 0), key=f"cast_shield_{sid}")
-    crit_mode = "Без крита"
     override = False
     final_damage = 0
     if action == "damage":
@@ -338,7 +349,6 @@ def render_selected_spell(data, target, selected_id=None):
         if target_token:
             if spell.get('reach')=='Ближняя' and distance_between(data,'player',target_token)!='Ближняя':st.warning('Ближнее заклинание: сначала сблизься с целью.')
             if ranged_miss_chance(data,'player',spell,target_token):st.warning('Дальнее заклинание при враге рядом: 50% шанс промаха. При промахе урон и эффекты не накладываются.')
-        dtype = "Огонь" if "Огонь" in spell["school"] else "Тьма"
         preview_raw = raw
         if raw > 0:
             preview = spell_damage_preview(data,spell,target,preview_raw,final_damage if override else None)
@@ -374,7 +384,6 @@ def render_selected_spell(data, target, selected_id=None):
     if data['combat_active'] and sum(x['source']=='player' and x.get('counts',True) for x in data.get('turn_actions',[]))>=2:blocked.append('действия закончились')
     if blocked:st.caption('Недоступно: '+'; '.join(blocked))
     if st.button("Применить способность", key=f"cast_{sid}", disabled=not can, type="primary", use_container_width=True):
-        chance = effective_crit_chance(data)
         crit = False
         try:
             for message in cast_spell(data, spell, target, crit=crit,
@@ -572,7 +581,7 @@ def render_party(data):
         render_stat_grid([('Атака в листе',profile['attack']),('Критический урон',profile['critical_damage']),('Шанс крита',str(profile['critical_chance'])+'%'),('Свободные очки',profile['free_points'])])
         st.markdown("<div class='section-h'>Сопротивления</div>", unsafe_allow_html=True)
         render_stat_grid([(e,str(ally['resists'][e])+'%') for e in ELEMENTS], elements=True)
-        st.caption('Стихийная защита этого персонажа задана в процентах. Свет −50% увеличивает входящий урон в 1,5 раза. В бою урон округляется до целого HP; крит отмечается вручную.')
+        st.caption('Стихийная защита этого персонажа задана в процентах. Свет −50% увеличивает входящий урон в 1,5 раза. В бою урон округляется до целого HP; крит определяется автоматически.')
         if profile['abilities']:
             st.markdown("<div class='section-h'>Способности</div>", unsafe_allow_html=True)
             for ability in profile['abilities'].splitlines():
@@ -677,7 +686,7 @@ def render_new_enemy(data):
         with st.form("adden"):
             c1, c2 = st.columns(2)
             name = c1.text_input("Имя нового врага", value="Враг")
-            level = c2.number_input("Уровень", min_value=1, max_value=60, value=10)
+            level = c2.number_input("Уровень", min_value=1, max_value=MAX_LEVEL, value=10)
             size = st.selectbox("Размер", ["Мелкий", "Обычный", "Крупный", "Огромный"])
             elite = st.checkbox("Элитный")
             boss = st.checkbox("Босс")
@@ -748,7 +757,6 @@ def render_queue(data, token):
 
 
 def render_area_selection(data,source,ability,target,prefix):
-    from kalista_map import area_targets,check_point_range,map_svg,ability_range,map_legend
     limit=ability_range(ability)
     st.caption(area_label(ability)+(' · от атакующего' if ability.get('area_shape')=='cone' else ' · дальность: '+(f'{limit:g} м' if limit is not None else 'не задана')))
     if st.session_state.get(prefix+'_anchor')!=target:
@@ -796,39 +804,6 @@ def render_area_spell(data,spell,target):
         st.caption('Каждая цель получает полный урон. Крит и эффекты проверяются независимо. Мана, Пепел/Тень и перезарядка учитываются один раз за каст.')
 
 
-def render_tactical_map(data,source,target,player_mode=False):
-    from kalista_map import map_svg,point,map_legend
-    if data.get('distance_mode')!='meters':return
-    from kalista_interactive_map import tactical_map
-    if editing() and not player_mode:
-        from kalista_map_library_ui import render_library
-        st.caption('Библиотека и настройки преград: Ведущий → Карты.')
-    from kalista_map_background import background
-    backdrop=background(data)
-    if backdrop:st.caption('Локация: '+backdrop['name']+f" · {backdrop['width']*backdrop['metres_per_pixel']:.1f} × {backdrop['height']*backdrop['metres_per_pixel']:.1f} м")
-    with st.expander('Карта боя · фигурки',expanded=True):
-        a=participant(data,source);action=next(x for x in a['actions'] if x.get('rule')=='move_point')
-        setup=editing() and not player_mode and st.toggle('Расстановка ведущего',key='map_setup_'+source)
-        selected=source
-        if setup:
-            selected=st.selectbox('Фигурка для расстановки',[t for t,_ in participants(data)],format_func=lambda t:participant_label(data,t),key='map_edit_actor')
-        destination=tactical_map(data,source,'movement_canvas_'+source,mode='setup' if setup else 'move',selected=selected)
-        st.caption('Потяни фигурку или коснись точки. Зелёный круг — 30 м перемещения; линия показывает расстояние. Для просмотра поля включи «Сдвиг».')
-        disabled=(data['combat_active'] and a.get('movement_used')) or a[hp_fields(a)[0]]<=0 or any(e['kind']=='fear' for e in a['effects'])
-        if st.button('Сохранить расстановку' if setup else ('Переместиться'),key='map_apply_'+source,disabled=bool(disabled and not setup),use_container_width=True):
-            try:
-                if setup:
-                    data['positions'][selected]=point(destination);data['map_revision']=data.get('map_revision',0)+1
-                    invalidate_player_requests(data,'Расстановка изменилась; предложи действие заново')
-                    persist_and_rerun('Расстановка на карте')
-                elif player_mode:
-                    submit_player_action(data,action['id'],[source],False,destination=destination);st.success('Перемещение выполнено')
-                else:
-                    for message in perform_action(data,source,action['id'],[source],destination=destination):log(message)
-                    persist_and_rerun('Перемещение на карте')
-            except ValueError as exc:st.error(str(exc))
-
-
 def render_movement(data,source_token,target_token,player_mode=False):
     source=participant(data,source_token)
     if data['combat_active']:
@@ -864,7 +839,6 @@ def render_ability_palette(data,source,player_mode=False):
         if a.get('spent'):reasons.append('Нужна перезарядка')
         if a.get('charges_max') and not a.get('charges_left'):reasons.append('Нет зарядов')
         if a.get('rule')=='eye' and (not data['combat_active'] or actor.get('eye_used')):reasons.append('Десница недоступна')
-        label=a['name']+f' · {mana} MP'+(f' · КД {cd}' if cd else '')
         palette.append(dict(id=a['id'],name=a['name'],mana=mana,cd=cd,reason='; '.join(reasons)))
     st.session_state['_board_palette_'+source]=palette
     with st.expander('Все способности · просмотр недоступных'):
@@ -885,7 +859,6 @@ def render_battle_workstation(data,source,target_key,player_mode=False):
     if ability:st.session_state['board_ability_'+source]=ability['id']
     mode=st.radio('Режим карты',['Атака','Перемещение'],horizontal=True,key='board_mode_'+source)
     if editing() and not player_mode:
-        from kalista_map_library_ui import render_library
         st.caption('Библиотека и настройки преград: Ведущий → Карты.')
     setup=bool(editing() and not player_mode and st.toggle('Расстановка ведущего',key='map_setup_'+source))
     selected=source
@@ -1402,39 +1375,6 @@ def submit_player_action(data, aid, victims, critical=False, destination=None, a
 
 
 @st.fragment(run_every='3s')
-def render_request_inbox():
-    latest,revision=read_state(SAVE_FILE)
-    if latest is None:return
-    latest=migrate(latest)
-    pending=[r for r in latest.get('player_requests',[]) if r['status']=='pending']
-    if pending:st.info(f'Предложения игрока: {len(pending)}')
-    render_request_controls(latest,revision)
-    if revision!=st.session_state.get('_save_revision') and not pending:st.caption('Лист изменился. Обнови игру перед редактированием.')
-
-
-def render_request_controls(data,revision=None):
-    for request in data.get('player_requests',[]):
-        if request['status']!='pending':continue
-        with st.container(border=True):
-            st.write('**Игрок предлагает: '+request['action_name']+'**')
-            st.caption('Цели: '+', '.join(participant_label(data,t) for t in request['victims'] if t in [token for token,_ in participants(data)]))
-            left,right=st.columns(2)
-            accept=left.button('Применить предложение',key='accept_'+request['id'])
-            reject=right.button('Отклонить',key='reject_'+request['id'])
-            if accept or reject:
-                try:
-                    previous=deepcopy(data)
-                    messages=resolve_player_request(data,request['id'],accept)
-                    for message in messages:data['combat_log'].insert(0,message)
-                    data['combat_log']=data['combat_log'][:80]
-                    new_revision=write_state(SAVE_FILE,data,revision,migrate)
-                    add_history(st.session_state.setdefault('_undo_history',[]),previous,data,'Действие игрока' if accept else 'Отклонено предложение')
-                    st.session_state['data']=data;st.session_state['_committed_data']=deepcopy(data);st.session_state['_save_revision']=new_revision
-                    st.rerun()
-                except (ValueError,OSError) as exc:st.error(str(exc))
-
-
-@st.fragment(run_every='3s')
 def render_live_battle():
     latest,_=read_state(SAVE_FILE)
     if latest is None:return
@@ -1552,7 +1492,7 @@ def render_backups():
             st.caption('Восстановление заменит текущую игру выбранным снимком. Текущая версия останется в автоматических снимках.')
             if st.button('Восстановить выбранный снимок',key='snapshot_restore'):
                 try:
-                    restored=restore_snapshot(SAVE_FILE,name,st.session_state['_save_revision'],migrate)
+                    restore_snapshot(SAVE_FILE,name,st.session_state['_save_revision'],migrate)
                     for key in list(st.session_state):
                         if key!='_role':del st.session_state[key]
                     st.rerun()
@@ -1591,7 +1531,6 @@ def render_player():
         if not data['combat_active'] and data.get('last_battle_reward'):
             hero=next((x for x in data['last_battle_reward']['heroes'] if x['token']=='ally'),None)
             if hero:st.caption(f"Награда за бой: +{hero['xp']} XP · уровень {hero['level_after']}"+(f" · +{hero['free_points']} свободных очков" if hero['free_points'] else ''))
-        tokens=[token for token,_ in visible_battle_participants(data)]
         target=render_battle_workstation(data,'ally','player_battle_target',player_mode=True)
         with st.expander('Подробнее об участнике и цели'):
             render_combatant_card(data,'ally','Твой персонаж',active=True)
@@ -1649,7 +1588,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 28:
+if data.get("schema_version", 5) < 29:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1998,37 +1937,9 @@ elif page=="Заклинания":
 
 # ===================== КВЕСТЫ =====================
 elif page=="Квесты":
-    st.markdown("<div class='main-title' style='font-size:1.6rem'>Квесты и заметки</div>", unsafe_allow_html=True)
-
-    if not data.get("quests"):
-        st.caption("Квестов пока нет")
-
-    for i, q in enumerate(list(data.get("quests", []))):
-        title = f"{q.get('name','Без имени')} — {q.get('status','?')}"
-        with st.expander(title):
-            q["name"] = st.text_input("Название", q.get("name",""), key=f"qn{i}")
-            statuses = ["Активен", "В процессе", "Ожидание", "Выполнен", "Провален"]
-            cur_st = q.get("status", "Активен")
-            q["status"] = st.selectbox("Статус", statuses,
-                index=statuses.index(cur_st) if cur_st in statuses else 0, key=f"qs{i}")
-            q["desc"] = st.text_area("Описание", q.get("desc",""), key=f"qdesc{i}")
-            if st.button("Удалить квест", key=f"qdel{i}"):
-                data["quests"].pop(i)
-                persist_and_rerun()
-
-    with st.form("aq"):
-        st.markdown("**Новый квест**")
-        qn = st.text_input("Название")
-        qs = st.selectbox("Статус", ["Активен", "В процессе", "Ожидание"])
-        qd = st.text_area("Описание")
-        if st.form_submit_button("Добавить") and qn.strip():
-            nid = max((q.get("id",0) for q in data.get("quests",[])), default=0) + 1
-            data.setdefault("quests", []).append({"id": nid, "name": qn.strip(), "status": qs, "desc": qd})
-            persist_and_rerun()
-
-    st.markdown("---")
-    st.markdown("**Личные заметки**")
-    data["notes"] = st.text_area("Заметки", value=data.get("notes",""), height=150, key="notes_area")
+    st.subheader('Квесты и заметки')
+    from kalista_quest_ui import render_root
+    render_root(data,persist_and_rerun,editable=True)
 
 
 # ===================== КУБИКИ =====================

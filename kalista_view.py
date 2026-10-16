@@ -1,7 +1,7 @@
 """Read-only character views. Editing mode affects presentation, not permissions."""
 import streamlit as st
 import kalista_engine as e
-from kalista_rarity import rarity_label,rarity_badge
+from kalista_rarity import rarity_badge
 from html import escape
 from kalista_growth import effective_item
 
@@ -160,7 +160,9 @@ def player_view(section,data,root,commit):
                 if x.get('use') and cols[1].button('Применить',key='ps_view_use_'+x['id'],disabled=x['qty']<=0 or x['use']['value']<=0):commit(root,'inventory',None,expected,x['id'])
     elif section=='Квесты':
         for x in p['quests']:
-            with st.expander(x['name']+' · '+x['status']):st.write(x['desc'])
+            with st.expander(x['name']+' · '+x['status']):
+                from kalista_quest_ui import show_quest
+                show_quest(x)
     elif section=='Заметки':st.write(p['notes'] or 'Заметок пока нет')
     elif section=='Биография':st.write(p['biography'] or 'Биография пока не заполнена')
     else:return False
@@ -210,12 +212,8 @@ def gm_view(page,data,apply_item,apply_special=None,apply_equip=None,persist=Non
                 inventory_details(x)
                 if x.get('use') and cols[1].button('Применить',key='view_use_'+str(i),disabled=x['qty']<=0 or x['use']['value']<=0):apply_item(x)
     elif page=='Квесты':
-        for x in data.get('quests',[]):
-            if isinstance(x,dict):
-                with st.expander(x.get('name','Квест')):
-                    if x.get('status'):st.caption(x['status'])
-                    for key in ('desc','tasks','notes','reward','rewards','description'):
-                        if x.get(key):show_text_value(x[key])
+        from kalista_quest_ui import render_root
+        render_root(data,editable=False)
     elif page=='Ведущий':
         section=st.radio('Раздел ведущего',['Сцены','NPC','Карты','Записная книжка'],key='gm_section',horizontal=True,label_visibility='collapsed')
         if section=='Карты':

@@ -94,7 +94,7 @@ def validate_player_sheet(ally):
                     if not isinstance(use,dict) or use.get('kind') not in ('heal','mana','shield'): raise ValueError('Неверное применение предмета')
                     if not isinstance(use.get('value'),int) or isinstance(use['value'],bool) or use['value']<1: raise ValueError('Укажи силу применения выше 0')
             else:
-                if item.get('status') not in ('Активен','Выполнен','Провален') or not isinstance(item.get('desc'),str): raise ValueError('Неверный квест')
+                if item.get('status') not in ('Активен','В процессе','Ожидание','Выполнен','Провален') or not isinstance(item.get('desc'),str): raise ValueError('Неверный квест')
     for key in ('gold','silver','copper'):
         value=p['currency'].get(key)
         if not isinstance(value,int) or isinstance(value,bool) or value<0: raise ValueError('Монеты должны быть целыми и неотрицательными')

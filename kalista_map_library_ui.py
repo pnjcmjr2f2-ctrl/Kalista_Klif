@@ -1,7 +1,7 @@
 """GM-only map library and explicit two-point calibration."""
 import streamlit as st
 import hashlib
-from kalista_map_background import catalog,background,calibration,assign_map,map_id,scene_key,ROOT
+from kalista_map_background import catalog,calibration,assign_map,map_id,scene_key,ROOT
 from kalista_interactive_map import calibrate_map
 
 def render_library(data,persist,selected_id=None):

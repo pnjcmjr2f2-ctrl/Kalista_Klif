@@ -1,5 +1,5 @@
 """Calibrated map backgrounds. A single uniform metres/pixel ratio prevents stretching."""
-import math,json,base64
+import math,json
 from pathlib import Path
 from copy import deepcopy
 from kalista_map import point

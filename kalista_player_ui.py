@@ -5,11 +5,11 @@ from copy import deepcopy
 from uuid import uuid4
 from html import escape
 import streamlit as st
-from kalista_view import editing,player_view,show_comparison,show_gear,gear_summary
+from kalista_view import editing,player_view,show_comparison,gear_summary
 import kalista_engine as e
 from kalista_text import readable_rules
 from kalista_storage import read_state,write_state,StaleState
-from kalista_player_model import EQUIPMENT_SLOTS,ITEM_TYPES,STATS,BONUSES,sheet_snapshot,edit_player_sheet,use_player_item,ensure_player_sheet,gear_totals
+from kalista_player_model import EQUIPMENT_SLOTS,ITEM_TYPES,STATS,BONUSES,sheet_snapshot,edit_player_sheet,use_player_item,gear_totals
 
 SECTIONS=['Обзор','Бой','Снаряжение','Инвентарь','Заклинания и способности','Характеристики','Квесты','Заметки','Биография','Кубики','Сцена']
 
@@ -239,16 +239,22 @@ def attributes(data,root):
 def quests(data,root):
     expected=baseline(data,'quests')
     for quest in data['ally']['sheet_profile']['quests']:
-        with st.expander(quest['name']+' · '+quest['status']):quest_form(root,quest,expected)
+        with st.expander(quest['name']+' · '+quest['status']):
+            from kalista_quest_ui import show_quest
+            show_quest(quest)
+            quest_form(root,quest,expected)
     with st.expander('Добавить квест',expanded=not expected):quest_form(root,None,expected)
 
 def quest_form(root,item,expected):
-    x=item or dict(id='new',name='',desc='',status='Активен');prefix='ps_quest_'+x['id']
+    x=item or dict(id='new',name='',desc='',reward='',status='Активен');prefix='ps_quest_'+x['id']
     with st.form(prefix):
         name=st.text_input('Название квеста',x['name'],key=prefix+'_name');desc=st.text_area('Задачи и заметки',x['desc'],key=prefix+'_desc')
-        status=st.selectbox('Статус квеста',['Активен','Выполнен','Провален'],index=['Активен','Выполнен','Провален'].index(x['status']),key=prefix+'_status')
+        from kalista_quests import STATUSES,reward
+        rewards=st.text_area('Награда за квест',reward(x),key=prefix+'_reward')
+        status=st.selectbox('Статус квеста',STATUSES,index=STATUSES.index(x['status']),key=prefix+'_status')
         if st.form_submit_button('Сохранить квест'):
-            new=dict(id=x['id'] if item else uuid4().hex,name=name,desc=desc,status=status)
+            new=deepcopy(x);new.update(id=x['id'] if item else uuid4().hex,name=name,desc=desc,status=status)
+            if rewards!=reward(x):new['reward']=rewards
             commit(root,'quests',[new if old['id']==x['id'] else old for old in expected] if item else expected+[new],expected)
     if item and st.button('Удалить квест',key=prefix+'_delete'):commit(root,'quests',[q for q in expected if q['id']!=x['id']],expected)
 

@@ -1,17 +1,15 @@
 """Game rules and migrations. No Streamlit or file writes in this module."""
 import math
 import random
-import json
 from copy import deepcopy
 from uuid import uuid4
-from datetime import datetime
 from kalista_player_model import ensure_player_sheet,gear_totals
 from kalista_progression import xp_needed,initialize_progress,MAX_LEVEL,advance_levels
 from kalista_rewards import begin_rewards,register_enemy,settle_rewards
 from kalista_rarity import ensure_rarities,RARITIES,rarity_label,rarity_badge
 from kalista_growth import ensure_growth,effective_item,bind_registry
 from kalista_shapes import is_area,check_area_aim,shape_targets
-from kalista_map import ensure_positions,separation,ability_range,validate_ability,check_point_range,area_targets,move,point
+from kalista_map import ensure_positions,separation,validate_ability,check_point_range,move,point
 
 ELEMENTS = ["Огонь", "Земля", "Вода", "Воздух", "Тьма", "Свет"]
 
@@ -244,7 +242,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -490,9 +488,13 @@ def migrate(saved):
     for item in list(data["equipment"].values())+data.get("equipment_reserve",[]):
         item.setdefault("spell_power",0)
         if isinstance(item["spell_power"],bool) or not isinstance(item["spell_power"],(int,float)) or not math.isfinite(item["spell_power"]):raise ValueError("Неверная сила заклинаний предмета")
+    for spell in data["spells"]:
+        if spell["name"]=="Искровой заряl":spell["name"]="Искровой заряд"
+    from kalista_quests import initialize
+    initialize(data,seed=saved.get("schema_version",5)<29)
     ensure_rarities(data)
     bind_registry(data)
-    data["schema_version"] = 28
+    data["schema_version"] = 29
     return data
 
 
@@ -1849,10 +1851,6 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
 def effect_lifetime(effect):
     from kalista_battle_readout import effect_label
     return effect_label(effect)
-    duration=effect.get('duration')
-    if duration is None: return effect['name']+' · бессрочно'
-    when='Осталось ходов цели' if effect['kind'] in ('dot','hot','weakness','fear') else 'Осталось полных раундов'
-    return f"{effect['name']} · {when}: {duration}"
 
 
 def public_player_state(data):
