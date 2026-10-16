@@ -182,25 +182,26 @@ def recalc(d):
     d["fear_power"]=cha/3/100
 
 
-def gen_enemy(level, size, elite):
+def gen_enemy(level, size, elite, boss=False, strength=1.0):
+    """Encounter baseline; independent HP/damage ranks avoid armor-only sponges."""
+    nonnegative_int(level,'Уровень врага')
+    if level<1 or level>MAX_LEVEL:raise ValueError('Уровень врага вне диапазона')
+    if isinstance(strength,bool) or not isinstance(strength,(int,float)) or not math.isfinite(strength) or not .5<=strength<=3:raise ValueError('Сила врага должна быть от 0.5 до 3')
     sm = {"Мелкий":0.6,"Обычный":1.0,"Крупный":1.5,"Огромный":2.2}.get(size,1.0)
-    em = 1.7 if elite else 1.0
-    m = sm * em
-    hp = int((40+level*18)*m*random.uniform(0.9,1.15))
-    armor = int((5+level*4)*m*random.uniform(0.85,1.15))
-    atk = int((8+level*3.5)*m*random.uniform(0.9,1.1))
-    resists = {}
-    for e in ELEMENTS:
-        resists[e] = min(90, max(0, int(level*2.0*m*random.uniform(0.6,1.3))))
-    # чуть сильнее в одной стихии
-    main = random.choice(ELEMENTS)
-    resists[main] = min(90, resists[main] + 15)
+    hp_rank,damage_rank,armor_rank=(4.,1.6,1.5) if boss else (1.8,1.25,1.2) if elite else (1.,1.,1.)
+    hp = max(1,round((100+level*45)*sm*hp_rank*strength*random.uniform(.95,1.05)))
+    armor = round((10+level*12)*sm*armor_rank*random.uniform(.95,1.05))
+    atk = max(1,round((25+level*14)*sm*damage_rank*strength*random.uniform(.95,1.05)))
+    # One strong and one weak school; no all-school immunity at high levels.
+    resists = {el:round(min(45,10+level*.8)*random.uniform(.7,1.1)) for el in ELEMENTS}
+    main,weak=random.sample(ELEMENTS,2)
+    resists[main]=min(75,resists[main]+20+(10 if boss else 5 if elite else 0))
+    resists[weak]=round(resists[weak]*.35)
     return {
         "hp":hp,"hp_max":hp,"armor":armor,"attack_damage":atk,
-        "attack_type": random.choice(["Физический"]+ELEMENTS),
-        "resists": resists,
-        "dots": [],
-        "initiative": int(8 + level*0.6 + random.randint(-3,5)),
+        "attack_type":"Физический","resists":resists,"dots":[],
+        "initiative":max(0,int(8+level*.6+random.randint(-3,5))),
+        "balance_version":46,"strength_factor":float(strength),
     }
 
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v45 · полный лист игрока
+Калиста Клиф — v46 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -686,7 +686,7 @@ def render_new_enemy(data):
         with st.form("adden"):
             c1, c2 = st.columns(2)
             name = c1.text_input("Имя нового врага", value="Враг")
-            level = c2.number_input("Уровень", min_value=1, max_value=MAX_LEVEL, value=10)
+            level = c2.number_input("Уровень", min_value=1, max_value=MAX_LEVEL, value=min(MAX_LEVEL,max(1,int(data.get("level",1)))))
             size = st.selectbox("Размер", ["Мелкий", "Обычный", "Крупный", "Огромный"])
             from kalista_enemies import RACES, ROLES
             race = st.selectbox('Раса / вид', RACES, key='new_enemy_race')
@@ -694,16 +694,18 @@ def render_new_enemy(data):
             enemy_role = st.selectbox('Класс / боевой шаблон', ('По расе и имени',)+ROLES, key='new_enemy_role')
             elite = st.checkbox("Элитный")
             boss = st.checkbox("Босс")
+            strength = st.number_input("Сила врага (1 — новая базовая сложность)",min_value=0.5,max_value=3.0,value=1.0,step=0.25)
+            st.caption("Элитный: HP ×1,8, урон ×1,25. Босс: HP ×4, урон ×1,6. Коэффициент силы меняет HP и урон; опыт остаётся по уровню и рангу.")
             if st.form_submit_button("Добавить врага"):
                 if not name.strip(): st.error("Укажи имя")
                 else:
                     eid = data["next_enemy_id"]
                     data["enemies"].append({"id": eid, "name": name.strip(), "level": level, "size": size,
-                                            "is_elite": elite, "is_boss":boss, "effects": [], **gen_enemy(level, size, elite)})
+                                            "is_elite": elite, "is_boss":boss, "effects": [], **gen_enemy(level, size, elite, boss, strength)})
                     from kalista_enemies import apply_loadout,suggested_role
                     data['enemies'][-1]['race']=race
                     data['enemies'][-1]['magic_element']=magic_element
-                    chosen_role=suggested_role(race+' '+name) if enemy_role=='По расе и имени' else enemy_role
+                    chosen_role=('Босс' if boss else suggested_role(race+' '+name)) if enemy_role=='По расе и имени' else enemy_role
                     apply_loadout(data['enemies'][-1],chosen_role)
                     validate_action_state(data)
                     data["next_enemy_id"] += 1
