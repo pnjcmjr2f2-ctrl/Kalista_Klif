@@ -75,6 +75,11 @@ def overview(data,root):
         tiles([(key,str(value)+'%') for key,value in a['resists'].items()])
         for effect in a['effects']:st.write(e.effect_lifetime(effect))
         if a.get('fear_immunity_turns',0):st.write('Иммунитет к страху и заморозке: до конца следующего личного хода')
+    with st.expander('Отдых'):
+        expected=baseline(data,'rest')
+        st.caption('Восстановит твои HP и ману, снимет эффекты и обычные перезарядки. Заряды и способности с ручной перезарядкой восстанавливаются отдельно.')
+        if st.button('Долгий отдых',key='ps_long_rest',disabled=data['combat_active']):commit(root,'rest',None,expected)
+
     if not editing():return
     with st.expander('HP и мана вручную'):
         expected=baseline(data,'resources')
@@ -92,10 +97,6 @@ def overview(data,root):
                 values=deepcopy(expected);values.update(xp=xp,xp_known=True);commit(root,'attributes',values,expected)
         if st.button('Повысить уровень · +4 свободных очка',key='ps_level_up',disabled=p['level']>=e.MAX_LEVEL):
             values=deepcopy(expected);values['xp']=max(0,values['xp']-e.xp_needed(values['level']));values['level']+=1;values['free_points']+=4;commit(root,'attributes',values,expected)
-    with st.expander('Отдых'):
-        expected=baseline(data,'rest')
-        st.caption('Восстановит твои HP и ману, снимет эффекты и обычные перезарядки. Заряды и способности с ручной перезарядкой восстанавливаются отдельно.')
-        if st.button('Долгий отдых',key='ps_long_rest',disabled=data['combat_active']):commit(root,'rest',None,expected)
 
 def inventory(data,root):
     p=data['ally']['sheet_profile'];expected=baseline(data,'inventory')

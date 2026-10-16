@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v48 · полный лист игрока
+Калиста Клиф — v49 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -298,6 +298,11 @@ def render_battle_header(data):
         if 'battle_section' not in st.session_state:st.session_state['battle_section']=prefs.get('battle_section','Ход')
         if st.session_state['battle_section']=='Калиста':st.session_state['battle_section']='Ход'
         prefs['battle_section']=st.radio('Раздел боя',['Ход','Участники','Эффекты','Очередь','Журнал'],key='battle_section',horizontal=True,label_visibility='collapsed')
+    if data['combat_active']:
+        foes=[a for _,a in participants(data) if a.get('side','Враг')=='Враг' and a is not data and a is not data['ally']]
+        if foes and all(a[hp_fields(a)[0]]<=0 for a in foes):st.success('Все противники побеждены. Заверши бой, чтобы начислить опыт и разыграть добычу.')
+        if st.button('Завершить бой и получить награды',key='battle_finish_visible',type='primary'):
+            log(end_combat(data));persist_and_rerun('Завершение боя и награды')
     with st.expander('Управление боем · отмена и завершение'):
         columns=st.columns(3)
         if data['combat_active']:
@@ -354,7 +359,7 @@ def render_selected_spell(data, target, selected_id=None):
         preview_raw = raw
         if raw > 0:
             preview = spell_damage_preview(data,spell,target,preview_raw,final_damage if override else None)
-            st.info(f"{target['name']}: −{preview['hp_loss']} HP · щит поглотит {preview['absorbed']}" + (" · без учёта крита" if not override else ""))
+            st.info(f"{target['name']}: после защиты {preview['incoming']} урона · потеря HP {preview['hp_loss']} · щит поглотит {preview['absorbed']}" + (" · без учёта крита" if not override else ""))
             with st.expander("Расчёт урона"):
                 st.caption(damage_message(target["name"],preview))
             if target is data['ally'] or target is data:
@@ -710,6 +715,8 @@ def render_new_enemy(data):
                     chosen_role=('Босс' if boss else suggested_role(race+' '+name)) if enemy_role=='По расе и имени' else enemy_role
                     apply_loadout(data['enemies'][-1],chosen_role)
                     validate_action_state(data)
+                    from kalista_map import ensure_positions
+                    ensure_positions(data)
                     data["next_enemy_id"] += 1
                     if data["combat_active"]:register_enemy(data,data["enemies"][-1])
                     if data["combat_active"]: refresh_turn_order(data)
@@ -806,7 +813,7 @@ def render_area_spell(data,spell,target):
     st.caption(f"Мана {spell['mana']} · КД {spell.get('cd_left',0)}/{spell.get('cd_max',0)} · одно действие")
     for t in tokens:
         a=participant(data,t);preview=spell_damage_preview(data,spell,a,raw)
-        st.caption(f"{a['name']}: −{preview['hp_loss']} HP · щит поглотит {preview['absorbed']} · без учёта крита")
+        st.info(f"{a['name']}: после защиты {preview['incoming']} урона · щит {preview['absorbed']} · потеря HP {preview['hp_loss']} · без учёта крита")
     used=sum(x['source']=='player' and x.get('counts',True) for x in data['turn_actions'])
     reason=problem or ('У Калисты 0 HP' if data['hp_current']<=0 else '') or ('Не хватает маны' if data['mana_current']<spell['mana'] else '') or ('Перезарядка' if spell.get('cd_left') else '') or ('Действия закончились' if data['combat_active'] and used>=2 else '') or ('Калиста под страхом' if any(x['kind']=='fear' for x in data['effects']) else '')
     if reason:st.caption('Недоступно: '+reason)
@@ -1252,7 +1259,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False, sel
             if result.get('miss'):st.warning(f"Шанс промаха из-за дистанции и эффектов: {result['miss']*100:g}% за попадание.")
             if result.get('dodge'):st.caption(f"Уклонение цели: {result['dodge']*100:.1f}% на каждое попадание")
             loss=str(result['hp_min']) if result['hp_min']==result['hp_max'] else f"{result['hp_min']}–{result['hp_max']}"
-            st.caption(f"{target['name']}: потеряет {loss} HP, щит поглотит {result['shield']}")
+            st.info(f"{target['name']}: итог после защиты — {result['incoming']} урона · щит поглотит {result['shield']} · потеря HP: {loss}. Без учёта крита; возможны промах и уклонение.")
         elif action['kind']=='heal': st.caption(f"{target['name']}: +{min(amount if manual_amount is None else manual_amount,max(0,target[hp_fields(target)[1]]-target[hp_fields(target)[0]]))} HP")
     unavailable=action['needs_setup'] or action['cooldown_left']>0 or action['spent'] or not victims or (action['kind']!='note' and (amount if manual_amount is None else manual_amount)<=0) or (action['charges_max']>0 and action['charges_left']==0) or action['mana_cost']>source.get('mana_current',0)
     if action['mana_cost']: st.caption(f"Стоимость: {action['mana_cost']} MP")
@@ -1429,7 +1436,7 @@ def render_loot(data):
     reward=data.get('last_battle_reward') if not data['combat_active'] else None
     if not pending and not reward:return
     title='Итоги последнего боя' if reward else f'Добыча · ожидает выдачи: {len(pending)}'
-    with st.expander(title,expanded=False):
+    with st.expander(title,expanded=not data['combat_active']):
         if reward:
             st.markdown('**Опыт уже начислен**')
             for hero in reward['heroes']:
@@ -1545,6 +1552,9 @@ def render_player():
     if public['combat_active'] and st.session_state.get('player_section')!='Бой':
         current=public['turn_order'][public['current_turn']] if public['turn_order'] else None
         st.info(f"Раунд {public['round']} · Ход: {current['name'] if current else 'нет участников'}")
+    if not data['combat_active'] and data.get('last_battle_reward'):
+        reward=next((h for h in data['last_battle_reward']['heroes'] if h['token']=='ally'),None)
+        if reward:st.success(f"Последний бой: +{reward['xp']} XP уже начислено · уровень {reward['level_after']}")
     section=st.session_state.get('player_section','Обзор')
     if section=='Обзор':render_combatant_card(data,'ally','Твой персонаж',active=True)
     elif section!='Бой':st.caption(section+' · HP '+str(public['ally']['hp'])+'/'+str(public['ally']['hp_max']))

@@ -20,9 +20,13 @@ def ensure_positions(data):
             elif token=='ally':positions[token]=[0.,5.]
             else:
                 index=sum(t.startswith('enemy:') for t in positions)
-                positions[token]=[20.+10*index,10.*(index%3)] if combat_side(data,token)=='Враг' else [-10.-10*index,0.]
+                anchor=positions.get('player',[0.,0.])
+                positions[token]=[anchor[0]+20.+10*index,anchor[1]+10.*(index%3)] if combat_side(data,token)=='Враг' else [anchor[0]-10.-10*index,anchor[1]]
 
-def separation(data,first,second):return math.dist(data['positions'][first],data['positions'][second])
+def separation(data,first,second):
+    ensure_positions(data)
+    if first not in data['positions'] or second not in data['positions']:raise ValueError('Участник больше не находится на карте')
+    return math.dist(data['positions'][first],data['positions'][second])
 def ability_range(ability):
     value=ability.get('range_m')
     if value is not None:

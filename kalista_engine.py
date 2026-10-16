@@ -1630,7 +1630,8 @@ def evasion_chance(target):
 def counterattack(data,source_token,target_token,result):
     target=participant(data,target_token);source=participant(data,source_token)
     if source_token==target_token or target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0:return []
-    if not target.get('counterattack_enabled') or result['hp_loss']<=0 or distance_between(data,source_token,target_token)!='Ближняя':return []
+    if not target.get('counterattack_enabled') or distance_between(data,source_token,target_token)!='Ближняя':return []
+    if result['hp_loss']<=0:return [f"{target['name']}: контратака не проверяется — попадание не сняло HP (щит поглотил {result.get('absorbed',0)})"]
     if target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0 or any(e['kind'] in ('fear','freeze') for e in target.get('effects',[])):return []
     from kalista_obstacles import blocking_wall
     if data.get('distance_mode')=='meters' and blocking_wall(data,data['positions'][target_token],data['positions'][source_token]):return []
@@ -1782,15 +1783,15 @@ def preview_action(data, source_token, action, token, critical=False, manual_amo
     count=action.get('extra_dice_count',0);sides=action.get('extra_dice_sides',0)
     values=[]
     for bonus in (count,count*sides):
-        copy=deepcopy(target);loss=absorbed=0
-        if token=='player' and data.get('ten_invis'): values.append((0,0));continue
+        copy=deepcopy(target);loss=absorbed=incoming=0
+        if token=='player' and data.get('ten_invis'): values.append((0,0,0));continue
         for hit in range(action['hits']):
             result=apply_damage(copy,outgoing_damage(participant(data,source_token),amount+bonus,action['damage_type']),action['damage_type'],defense_factor=action_damage_factor(copy,action))
-            loss+=result['hp_loss'];absorbed+=result['absorbed']
-        values.append((loss,absorbed))
+            loss+=result['hp_loss'];absorbed+=result['absorbed'];incoming+=result['incoming']
+        values.append((loss,absorbed,incoming))
     dodge=evasion_chance(target) if action['damage_type']=='Физический' else 0
     miss=ranged_miss_chance(data,source_token,action,token) if action['kind']=='damage' else 0
-    return dict(hp_min=0 if dodge or miss else values[0][0],hp_max=values[1][0],shield=values[0][1],dodge=dodge,miss=miss)
+    return dict(hp_min=0 if dodge or miss else values[0][0],hp_max=values[1][0],shield=values[0][1],incoming=values[1][2],dodge=dodge,miss=miss)
 
 
 def perform_action(data, source_token, action_id, victims, critical=False, reaction=False, manual_amount=None, simulation=False, destination=None, area_center=None):
