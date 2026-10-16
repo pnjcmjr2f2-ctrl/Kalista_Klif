@@ -30,12 +30,12 @@ def cast_area_spell(data,spell,center,final_damage=None):
     counters=[]
     for token in tokens:
         target=e.participant(candidate,token)
-        if (target is candidate and candidate.get('ten_invis')) or (e.ranged_miss_chance(candidate,'player',spell,token) and e.random.random()<.5):
+        if (target is candidate and candidate.get('ten_invis')) or (e.ranged_miss_chance(candidate,'player',spell,token) and e.random.random()<e.ranged_miss_chance(candidate,'player',spell,token)):
             messages.append(target['name']+': промах');continue
         amount=raw
         if final_damage is None and e.random.random()<e.effective_crit_chance(candidate):amount=round(raw*1.5);messages.append(target['name']+': КРИТ ×1,5')
         result=e.spell_damage_apply(candidate,spell,target,amount,final_damage);messages.append(e.damage_message(target['name'],result))
-        messages.extend(target['name']+': '+m for m in e.roll_spell_effects(candidate,spell,target));counters.append((token,result))
+        messages.extend(target['name']+': '+m for m in e.roll_spell_effects(candidate,spell,target,amount));counters.append((token,result))
     if empowered:candidate['pepel_empower']=False
     for token,result in counters:
         if token!='player' and candidate['hp_current']>0:messages.extend(e.counterattack(candidate,'player',token,result))

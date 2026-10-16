@@ -19,7 +19,9 @@ def tactical_map(data, source, key, center=None, radius=0, mode='move', selected
     active_ability=st.session_state.get(ability_key)
     epoch=f"{data.get('map_revision',0)}:{source}:{selected or source}:{mode}:{data.get('turn_serial',0)}:{center}:{map_id(data)}:{target}:{active_ability}:{shape}:{cone_length}:{cone_angle}"
     from kalista_obstacles import walls
-    event=_component(obstacles=walls(data),background=backdrop,actors=actors,palette=palette,active_ability=active_ability,view_epoch=str(data.get('map_revision',0))+map_id(data)+(selected or source),target=target,range_m=range_m,shape=shape,cone_length=cone_length,cone_angle=cone_angle,source=selected or source,center=center,radius=radius,mode=mode,epoch=epoch,key=key,default=None)
+    from kalista_statuses import movement_limit
+    from kalista_engine import participant
+    event=_component(move_limit=movement_limit(participant(data,selected or source)),obstacles=walls(data),background=backdrop,actors=actors,palette=palette,active_ability=active_ability,view_epoch=str(data.get('map_revision',0))+map_id(data)+(selected or source),target=target,range_m=range_m,shape=shape,cone_length=cone_length,cone_angle=cone_angle,source=selected or source,center=center,radius=radius,mode=mode,epoch=epoch,key=key,default=None)
     if isinstance(event,dict) and event.get('epoch')==epoch:
         if isinstance(event.get('ability'),(str,int)) and not isinstance(event.get('ability'),bool) and event.get('ability') in {a['id'] for a in palette} and event['ability']!=active_ability:
             st.session_state['_pending_ability_'+source]=event['ability'];st.rerun()

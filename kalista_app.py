@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Калиста Клиф — v44 · полный лист игрока
+Калиста Клиф — v45 · полный лист игрока
 Ручное ведение НРИ, очередь ходов, эффекты, щиты, лечение и 6 стихий
 """
 
@@ -688,6 +688,10 @@ def render_new_enemy(data):
             name = c1.text_input("Имя нового врага", value="Враг")
             level = c2.number_input("Уровень", min_value=1, max_value=MAX_LEVEL, value=10)
             size = st.selectbox("Размер", ["Мелкий", "Обычный", "Крупный", "Огромный"])
+            from kalista_enemies import RACES, ROLES
+            race = st.selectbox('Раса / вид', RACES, key='new_enemy_race')
+            magic_element = st.selectbox('Стихия магии',['По классу']+ELEMENTS,key='new_enemy_element')
+            enemy_role = st.selectbox('Класс / боевой шаблон', ('По расе и имени',)+ROLES, key='new_enemy_role')
             elite = st.checkbox("Элитный")
             boss = st.checkbox("Босс")
             if st.form_submit_button("Добавить врага"):
@@ -696,6 +700,12 @@ def render_new_enemy(data):
                     eid = data["next_enemy_id"]
                     data["enemies"].append({"id": eid, "name": name.strip(), "level": level, "size": size,
                                             "is_elite": elite, "is_boss":boss, "effects": [], **gen_enemy(level, size, elite)})
+                    from kalista_enemies import apply_loadout,suggested_role
+                    data['enemies'][-1]['race']=race
+                    data['enemies'][-1]['magic_element']=magic_element
+                    chosen_role=suggested_role(race+' '+name) if enemy_role=='По расе и имени' else enemy_role
+                    apply_loadout(data['enemies'][-1],chosen_role)
+                    validate_action_state(data)
                     data["next_enemy_id"] += 1
                     if data["combat_active"]:register_enemy(data,data["enemies"][-1])
                     if data["combat_active"]: refresh_turn_order(data)
@@ -830,7 +840,7 @@ def render_ability_palette(data,source,player_mode=False):
         mana=a.get('mana',a.get('mana_cost',0));cd=a.get('cd_left',a.get('cooldown_left',0))
         reasons=[]
         if actor[hp_fields(actor)[0]]<=0:reasons.append('0 HP')
-        if any(e['kind']=='fear' for e in actor.get('effects',[])):reasons.append('Страх')
+        if any(e['kind'] in ('fear','freeze') for e in actor.get('effects',[])):reasons.append('Страх')
         if mana>actor.get('mana_current',0):reasons.append('Не хватает маны')
         if cd:reasons.append(f'Перезарядка: {cd}')
         if data['combat_active'] and used>=2 and not a.get('reaction'):reasons.append('Действия закончились')
@@ -890,15 +900,17 @@ def render_battle_workstation(data,source,target_key,player_mode=False):
                     actor=participant(data,source)
                     action=next(a for a in actor['actions'] if a.get('rule')=='move_point')
                     distance=math.dist(data['positions'][source],destination)
-                    if not setup:st.caption(f'Перемещение: {distance:.1f} / 30 м')
+                    from kalista_statuses import movement_limit
+                    limit=movement_limit(actor)
+                    if not setup:st.caption(f'Перемещение: {distance:.1f} / {limit:g} м')
                     reasons=[]
                     if not setup:
                         if player_mode and data['combat_active'] and (not get_current_actor(data) or actor_token(get_current_actor(data))!=source):reasons.append('Сейчас ход другого участника')
                         if distance<=1e-9:reasons.append('Выбери точку назначения')
-                        if distance>30+1e-9:reasons.append('Больше 30 м')
+                        if distance>limit+1e-9:reasons.append(f'Больше {limit:g} м')
                         if data['combat_active'] and actor.get('movement_used'):reasons.append('Перемещение использовано')
                         if actor[hp_fields(actor)[0]]<=0:reasons.append('0 HP')
-                        if any(e['kind']=='fear' for e in actor['effects']):reasons.append('Страх')
+                        if any(e['kind'] in ('fear','freeze') for e in actor['effects']):reasons.append('Страх')
                     if not setup:
                         from kalista_obstacles import blocking_wall
                         if blocking_wall(data,data['positions'][source],destination,'movement'):reasons.append('Путь перекрывает преграда')
@@ -1191,7 +1203,9 @@ def render_action_panel(data, source_token, victim_token, player_mode=False, sel
     action=actions[aid]
     if action['needs_setup']: st.warning('Для этого действия ведущему нужно задать боевые числа и подтвердить правила в редакторе действий.')
     critical=False
-    if action['kind']=='damage' and action['shared_attack'] and source.get('sheet_profile'):
+    if action['kind']=='damage' and source_token.startswith('enemy:'):
+        crit_hint=f" · автоматический крит {source.get('critical_chance',0):g}%"
+    elif action['kind']=='damage' and action['shared_attack'] and source.get('sheet_profile'):
         crit_hint=f" · автоматический крит {source['sheet_profile']['critical_chance']:g}%"
     else:crit_hint=''
     amount=action_amount(source,action,critical)
@@ -1229,7 +1243,7 @@ def render_action_panel(data, source_token, victim_token, player_mode=False, sel
             st.caption('Дистанция: '+(f'{separation(data,source_token,token):.1f} м · ' if data.get('distance_mode')=='meters' else '')+distance_between(data,source_token,token))
             try:result=preview_action(data,source_token,action,token,critical,manual_amount,area_center=area_center)
             except ValueError as exc:st.warning(str(exc));continue
-            if result.get('miss'):st.warning('Дальняя атака при враге рядом: 50% шанс промаха за попадание.')
+            if result.get('miss'):st.warning(f"Шанс промаха из-за дистанции и эффектов: {result['miss']*100:g}% за попадание.")
             if result.get('dodge'):st.caption(f"Уклонение цели: {result['dodge']*100:.1f}% на каждое попадание")
             loss=str(result['hp_min']) if result['hp_min']==result['hp_max'] else f"{result['hp_min']}–{result['hp_max']}"
             st.caption(f"{target['name']}: потеряет {loss} HP, щит поглотит {result['shield']}")
@@ -1279,6 +1293,9 @@ def render_action_panel(data, source_token, victim_token, player_mode=False, sel
 def render_action_editor(data,token):
     if not editing():return
     target=participant(data,token)
+    if token.startswith('enemy:'):
+        from kalista_enemy_ui import render_enemy_setup
+        render_enemy_setup(data,token,persist_and_rerun)
     with st.expander('Настроить действия и лимит хода'):
         st.caption('У каждого участника 2 действия и 1 перемещение за ход. Контратака не расходует действия.')
         if not target['actions']:
@@ -1294,6 +1311,7 @@ def render_action_editor(data,token):
                 kind=st.selectbox('Результат',['damage','heal','shield','note'],index=['damage','heal','shield','note'].index(action['kind']),format_func=lambda v:dict(damage='Урон',heal='Лечение',shield='Щит',note='Статус')[v])
                 amount=st.number_input('Базовая величина',min_value=0,value=action['amount'])
                 shared=st.checkbox('Брать урон атаки из характеристик участника',action['shared_attack'])
+                damage_multiplier=st.number_input('Множитель урона способности',min_value=0.01,value=float(action.get('multiplier',1)),step=0.1)
                 hits=st.number_input('Попаданий',min_value=1,max_value=10,value=action['hits'])
                 dtype=st.selectbox('Тип урона',DAMAGE_TYPES,index=DAMAGE_TYPES.index(action['damage_type']))
                 reach=st.selectbox('Дальность атаки',['Ближняя','Дальняя','Любая'],index=['Ближняя','Дальняя','Любая'].index(action.get('reach','Ближняя')))
@@ -1310,8 +1328,11 @@ def render_action_editor(data,token):
                 manual=st.checkbox('После применения нужна ручная перезарядка',action['manual_recharge'])
                 reaction=st.checkbox('Реакция вне своего хода (не расходует лимит)',action.get('reaction',False))
             with editor_tabs[2]:
+                from kalista_statuses import edit_proc
+                hit_effect=edit_proc(action,'proc_'+token+'_'+aid)
                 effect_kind=st.selectbox('Дополнительный эффект',list(EFFECT_KINDS),index=list(EFFECT_KINDS).index(action['effect_kind']),format_func=lambda v:EFFECT_KINDS[v])
                 effect_value=st.number_input('Величина эффекта (для брони можно отрицательную)',value=action['effect_value'])
+                effect_chance=st.number_input('Шанс дополнительного эффекта (%)',min_value=0.,max_value=100.,value=float(action.get('effect_chance',100)))
                 duration=st.number_input('Длительность: раунды / тики (0 — бессрочно)',min_value=0,value=action['duration'])
                 element=st.selectbox('Стихия эффекта',ELEMENTS,index=ELEMENTS.index(action['effect_element']))
                 stacks=st.number_input('Максимум наложений',min_value=1,max_value=20,value=action['max_stacks'])
@@ -1321,6 +1342,9 @@ def render_action_editor(data,token):
             if st.form_submit_button('Сохранить действие'):
                 candidate=deepcopy(data);item=next(a for a in participant(candidate,token)['actions'] if a['id']==aid)
                 item.update(name=name,kind=kind,amount=amount,shared_attack=shared,hits=hits,damage_type=dtype,cooldown=cooldown,manual_recharge=manual,effect_kind=effect_kind,effect_value=effect_value,duration=duration,effect_element=element,max_stacks=stacks,description=desc,needs_setup=not ready,mana_cost=mana_cost,charges_max=charges,charges_left=charges if charges!=action['charges_max'] else action['charges_left'],armor_penetration=penetration,extra_dice_count=dice_count,extra_dice_sides=dice_sides,range_m=range_m,area_radius_m=radius,**shape_settings)
+                item['hit_effect']=hit_effect
+                item['multiplier']=damage_multiplier
+                item['effect_chance']=effect_chance
                 item['reaction']=reaction
                 item['reach']=reach
                 try:
@@ -1328,6 +1352,9 @@ def render_action_editor(data,token):
                 except ValueError as exc: st.error(str(exc))
         if st.button('Восстановить это действие',key=f'recharge_{token}_{aid}'):
             action['spent']=False;action['cooldown_left']=0;action['charges_left']=action['charges_max'];persist_and_rerun('Ручная перезарядка')
+        remove=st.checkbox('Подтвердить удаление способности',key=f'delete_action_confirm_{token}_{aid}')
+        if st.button('Удалить способность',key=f'delete_action_{token}_{aid}',disabled=not remove):
+            target['actions']=[a for a in target['actions'] if a['id']!=aid];persist_and_rerun('Удалена способность')
         with st.form(f'new_action_{token}'):
             new_name=st.text_input('Новое действие')
             if st.form_submit_button('Добавить действие') and new_name.strip():
@@ -1588,7 +1615,7 @@ if "data" not in st.session_state:
     st.session_state.data=load()
     recalc(st.session_state.data)
 data=st.session_state.data
-if data.get("schema_version", 5) < 29:
+if data.get("schema_version", 5) < 30:
     data = migrate(data)
     st.session_state.data = data
 if st.session_state.pop("_reset_resource_widgets", False):
@@ -1881,7 +1908,10 @@ elif page=="Заклинания":
                 sp["base"] = c1.number_input("Базовый урон", min_value=0, value=int(sp.get("base",0) or 0), key=f"sb{sp['id']}")
                 sp["mana"] = c2.number_input("Мана", min_value=0, value=int(sp.get("mana",0) or 0), key=f"sm{sp['id']}")
                 sp["cd_max"] = c3.number_input("Перезарядка (раунды)", min_value=0, value=int(sp.get("cd_max",0) or 0), key=f"sc{sp['id']}")
-                schools = ["Огонь", "Тьма", "Огонь+Тьма"]
+                from kalista_statuses import edit_proc
+                selected_proc=edit_proc(sp,"spell_proc_"+str(sp["id"]))
+                if selected_proc is not None or "hit_effect" in sp:sp["hit_effect"]=selected_proc
+                schools = ELEMENTS + ["Огонь+Тьма"]
                 cur = sp.get("school", "Огонь")
                 sp["school"] = c4.selectbox("Школа", schools, index=schools.index(cur) if cur in schools else 0, key=f"ss{sp['id']}")
                 sp["reach"] = st.selectbox("Дальность способности",["Ближняя","Дальняя","Любая"],index=["Ближняя","Дальняя","Любая"].index(sp.get("reach","Дальняя")),format_func=lambda v:reach_label({"reach":v}),key=f"sr{sp['id']}")
@@ -1917,7 +1947,7 @@ elif page=="Заклинания":
         sb = c1.number_input("Урон", min_value=0, value=50)
         sm = c2.number_input("Мана", min_value=0, value=30)
         sc = c3.number_input("Перезарядка (раунды)", min_value=0, value=0)
-        ss = st.selectbox("Школа", ["Огонь", "Тьма", "Огонь+Тьма"])
+        ss = st.selectbox("Школа", ELEMENTS + ["Огонь+Тьма"])
         sr = st.selectbox("Дальность способности",["Ближняя","Дальняя","Любая"],index=1,format_func=lambda v:reach_label({"reach":v}))
         range_m=st.number_input("Дальность в метрах (0 — не задана)",min_value=0.,value=0.) or None
         radius=st.number_input("Радиус массовой атаки (м; 0 — без области)",min_value=0.,value=0.)

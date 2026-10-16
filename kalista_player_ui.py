@@ -74,7 +74,7 @@ def overview(data,root):
     with st.expander('Сопротивления и эффекты'):
         tiles([(key,str(value)+'%') for key,value in a['resists'].items()])
         for effect in a['effects']:st.write(e.effect_lifetime(effect))
-        if a.get('fear_immunity_turns',0):st.write('Иммунитет к страху: до конца следующего личного хода')
+        if a.get('fear_immunity_turns',0):st.write('Иммунитет к страху и заморозке: до конца следующего личного хода')
     if not editing():return
     with st.expander('HP и мана вручную'):
         expected=baseline(data,'resources')

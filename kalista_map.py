@@ -50,23 +50,26 @@ def area_targets(data,center,radius):
     return [t for t,a in participants(data) if a[hp_fields(a)[0]]>0 and math.dist(data['positions'][t],center)<=radius+1e-9]
 
 def move(data,source,target=None,rule='move_point',destination=None):
+    from kalista_engine import participant
+    from kalista_statuses import movement_limit
+    limit=movement_limit(participant(data,source))
     start=data['positions'][source]
     if rule=='move_point':end=point(destination)
     else:
         if target==source:raise ValueError('Выбери другого участника для перемещения')
         goal=data['positions'][target];distance=math.dist(start,goal)
         if rule=='move_close':
-            amount=min(30.,max(0,distance-5.))
+            amount=min(limit,max(0,distance-5.))
             if amount<=1e-9:raise ValueError('Цель уже в ближней дистанции')
             vector=[(goal[i]-start[i])/distance for i in (0,1)]
         else:
-            amount=30.;vector=[(start[i]-goal[i])/distance for i in (0,1)] if distance else [1.,0.]
+            amount=limit;vector=[(start[i]-goal[i])/distance for i in (0,1)] if distance else [1.,0.]
         end=[start[i]+vector[i]*amount for i in (0,1)]
     from kalista_obstacles import check_path
     check_path(data,start,end,"movement")
     distance=math.dist(start,end)
     if distance<=1e-9:raise ValueError('Укажи другую позицию')
-    if distance>30.+1e-9:raise ValueError('За одно перемещение можно пройти не более 30 м')
+    if distance>limit+1e-9:raise ValueError(f'С учётом эффектов можно пройти не более {limit:g} м')
     data['positions'][source]=point(end);data['map_revision']=data.get('map_revision',0)+1
     return distance
 

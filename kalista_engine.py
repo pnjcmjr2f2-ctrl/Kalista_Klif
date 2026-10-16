@@ -242,7 +242,7 @@ def validate_tree(value, template, path="сохранение"):
 
 def migrate(saved):
     validate_tree(saved, DEFAULT)
-    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29):
+    if saved.get("schema_version", 5) not in (5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30):
         raise ValueError("Версия сохранения не поддерживается")
     data = merge_defaults(DEFAULT, saved)
     if data["name"] in ("Калист", "Калист Клиф"):
@@ -350,6 +350,9 @@ def migrate(saved):
         spell.setdefault("area_radius_m",0)
         spell.setdefault("range_m",None)
         if spell["range_m"]==0:spell["range_m"]=None
+        from kalista_statuses import validate_proc
+        validate_proc(spell)
+        if spell["school"] not in ELEMENTS+["Огонь+Тьма"]:raise ValueError("Неизвестная школа заклинания")
         validate_ability(spell)
         if spell["reach"] not in ("Ближняя","Дальняя","Любая"):raise ValueError("Неверная дальность заклинания")
     if len({sp["id"] for sp in data["spells"]}) != len(data["spells"]):
@@ -476,7 +479,7 @@ def migrate(saved):
     if saved.get('schema_version',5)<21:
         invalidate_player_requests(data,'Правила эффектов обновлены; предложи действие заново')
     for _,target in participants(data):
-        nonnegative_int(target.get('fear_immunity_turns',0),'Иммунитет к страху')
+        nonnegative_int(target.get('fear_immunity_turns',0),'Иммунитет к страху и заморозке')
     for spell in data['spells']:
         if spell.get('dot',{}):
             if spell['dot'].get('name') in ('Горение','Проклятие'):
@@ -494,7 +497,11 @@ def migrate(saved):
     initialize(data,seed=saved.get("schema_version",5)<29)
     ensure_rarities(data)
     bind_registry(data)
-    data["schema_version"] = 29
+    if saved.get('schema_version',5)<30:
+        for action in data['ally'].get('actions',[]):
+            if action.get('kind')=='damage' and action.get('shared_attack') and action.get('damage_type')=='Физический':
+                action.setdefault('hit_effect',dict(kind='bleed',chance=25,duration=3,value=10))
+    data["schema_version"] = 30
     return data
 
 
@@ -506,6 +513,7 @@ def spell_raw(base, power, dual=False, soul=False):
 
 
 EFFECT_KINDS = {
+    "bleed":"Кровотечение", "chill":"Охлаждение", "freeze":"Заморозка", "slow":"Замедление", "armor_break":"Ослабление брони (%)", "blind":"Ослепление",
     "note": "Статус / заметка", "shield": "Щит", "dot": "Периодический урон",
     "weakness": "Слабость", "fear": "Страх", "hot": "Периодическое лечение", "armor": "Поправка к броне", "resist": "Поправка к сопротивлению",
 }
@@ -564,10 +572,11 @@ def validate_effect(effect):
         raise ValueError("Величина эффекта должна быть целым числом")
     if kind in ("shield", "dot", "hot") and value < 0:
         raise ValueError("Щит, урон и лечение не могут быть отрицательными")
+    if kind in ("chill","slow","armor_break","blind") and not 0<=value<=100:raise ValueError("Штраф эффекта должен быть от 0 до 100%")
     duration = effect.get("duration")
     if duration is not None and (isinstance(duration, bool) or not isinstance(duration, int) or duration < 1):
         raise ValueError("Длительность должна быть положительной или бессрочной")
-    if kind in ("dot", "hot", "weakness", "fear") and duration is None:
+    if kind in ("dot", "hot", "weakness", "fear", "bleed", "chill", "freeze", "slow", "armor_break", "blind") and duration is None:
         raise ValueError("Периодическому эффекту нужно количество срабатываний")
     if kind in ("dot", "resist") and effect.get("element", "Огонь") not in DAMAGE_TYPES:
         raise ValueError("Неизвестный тип урона или сопротивления")
@@ -584,8 +593,9 @@ def validate_effect(effect):
 
 def add_effect(target, effect, round_number=0, stack=False):
     validate_effect(effect)
-    if effect["kind"] == "fear" and target.get("fear_immunity_turns", 0) > 0:
+    if effect["kind"] in ("fear","freeze") and target.get("fear_immunity_turns", 0) > 0:
         return None
+    if effect["kind"]=="bleed" and (target.get("bloodless") or any(w in target.get("race", "").casefold() for w in ("скелет","лич","голем","нежить"))):return None
     entry = deepcopy(effect)
     entry.setdefault("value", 0)
     entry.setdefault("duration", None)
@@ -613,7 +623,7 @@ def effective_defense(target, damage_type):
         raise ValueError("Неизвестный тип урона")
     if damage_type == "Физический":
         return max(0, target.get("armor", 0) + sum(
-            effect["value"] for effect in target.get("effects", []) if effect["kind"] == "armor"))
+            effect["value"] for effect in target.get("effects", []) if effect["kind"] == "armor")) * (1-max([0]+[min(100,max(0,e["value"])) for e in target.get("effects",[]) if e["kind"]=="armor_break"])/100)
     resist = target.get("resists", {}).get(damage_type, 0)
     # Сохраняем прежнее числовое правило Тени: +20 пунктов, с пределом 95.
     if target.get("ten_resist_boost", 0) > 0:
@@ -661,6 +671,9 @@ def apply_damage(target, amount, damage_type="Физический", final=False
         target["effects"] = [effect for effect in target.get("effects", [])
                              if effect["kind"] != "shield" or effect["value"] > 0]
     target[hp_fields(target)[0]] = result["hp_after"]
+    if result["hp_loss"]>0 and any(e["kind"]=="freeze" for e in target.get("effects",[])):
+        target["effects"]=[e for e in target["effects"] if e["kind"]!="freeze"]
+        target["fear_immunity_turns"]=max(1,target.get("fear_immunity_turns",0))
     return result
 
 
@@ -725,21 +738,21 @@ def tick_periodic(target):
     if target.get("fear_immunity_turns", 0) > 0:
         target["fear_immunity_turns"] -= 1
         if target["fear_immunity_turns"] == 0:
-            messages.append(f"Иммунитет к страху завершён: {target['name']}")
+            messages.append(f"Иммунитет к страху и заморозке завершён: {target['name']}")
     for effect in list(target.get("effects", [])):
-        if effect['kind'] in ('weakness','fear'):
+        if effect['kind'] in ('weakness','fear','chill','freeze','slow','armor_break','blind'):
             effect['duration']-=1
             if effect['duration']<=0:
-                if effect['kind']=='fear':
+                if effect['kind'] in ('fear','freeze'):
                     target['fear_immunity_turns']=1
-                    messages.append(f"Иммунитет к страху: до конца следующего личного хода — {target['name']}")
+                    messages.append(f"Иммунитет к страху и заморозке: до конца следующего личного хода — {target['name']}")
                 target['effects']=[item for item in target['effects'] if item['id']!=effect['id']]
                 messages.append(f"«{effect['name']}» завершён: {target['name']}")
             continue
-        if effect["kind"] not in ("dot", "hot"):
+        if effect["kind"] not in ("dot", "hot", "bleed"):
             continue
-        if effect["kind"] == "dot":
-            result = apply_damage(target, effect["value"], effect["element"])
+        if effect["kind"] in ("dot","bleed"):
+            result = apply_damage(target, effect["value"], effect["element"],final=effect["kind"]=="bleed")
             messages.append(f"«{effect['name']}»: " + damage_message(target["name"], result))
         else:
             result = apply_healing(target, effect["value"])
@@ -755,7 +768,7 @@ def tick_round_effects(target, completed_round):
     messages = []
     kept = []
     for effect in target.get("effects", []):
-        if (effect["kind"] not in ("dot", "hot", "weakness", "fear") and effect["duration"] is not None
+        if (effect["kind"] not in ("dot", "hot", "weakness", "fear", "bleed", "chill", "freeze", "slow", "armor_break", "blind") and effect["duration"] is not None
                 and effect.get("applied_round", 0) < completed_round):
             effect["duration"] -= 1
         if effect["duration"] is None or effect["duration"] > 0:
@@ -820,8 +833,8 @@ def begin_actor_turn(data):
         if data.get('ten_resist_boost',0)>0:
             data['ten_resist_boost']-=1
             if data['ten_resist_boost']==0:messages.append('Сопротивления Тени истекли: начало 3-го хода Калисты после активации')
-    if actor and any(e['kind']=='fear' for e in (combatant or {}).get('effects',[])):
-        message=f"{combatant['name']}: пропускает ход — Страх"
+    if actor and any(e['kind'] in ('fear','freeze') for e in (combatant or {}).get('effects',[])):
+        message=f"{combatant['name']}: пропускает ход — страх или заморозка"
         record_turn_action(data,actor_token(actor),'Страх',combatant['name'],message,counts=False)
         return messages+[message]+advance_turn(data)
     return messages
@@ -884,8 +897,10 @@ def kalista_dot_damage(data, kind):
     return round(total_stat(data, "Интеллект") * (1 + data.get("spell_power", 0)) * coefficient)
 
 
-def roll_spell_effects(data,spell,target):
+def roll_spell_effects(data,spell,target,hit_amount=None):
     if spell_action(spell)!='damage' or target[hp_fields(target)[0]]<=0:return []
+    from kalista_statuses import on_hit
+    extra=on_hit(target,spell,hit_amount or spell_raw(spell["base"],data.get("spell_power",0)),data["round"])
     rolls=[]
     if 'Огонь' in spell['school']:
         rolls.append(('dot','Горение',kalista_dot_damage(data,'burn'),'Огонь',3,.5,'burn'))
@@ -908,13 +923,13 @@ def roll_spell_effects(data,spell,target):
             add_effect(target,dict(kind=kind,name=name,value=value,element=element,duration=duration,source='kalista:'+key),data['round'] if data['combat_active'] else 0)
             messages.append(f'{name}: наложено на {duration} хода цели (бросок {roll*100:.1f}% < {chance*100:.1f}%)')
         else:messages.append(f'{name}: не наложено (бросок {roll*100:.1f}% ≥ {chance*100:.1f}%)')
-    return messages
+    return extra+messages
 
 
 def spell_damage_preview(data,spell,target,raw,final_damage=None):
     if final_damage is not None:return damage_preview(target,final_damage,final=True)
     if spell['name']=='Теневой укол':return damage_preview(target,raw,final=True)
-    schools=['Огонь','Тьма'] if spell['school']=='Огонь+Тьма' else ['Огонь' if 'Огонь' in spell['school'] else 'Тьма']
+    schools=['Огонь','Тьма'] if spell['school']=='Огонь+Тьма' else [spell['school']]
     incoming=0.0
     racial_reduction=0.0
     details=[]
@@ -1001,9 +1016,9 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
         data["soul_flame_boost"] = False
     messages = [f"«{spell['name']}» (−{spell['mana']} MP)" + (" · КРИТ" if crit and action == "damage" else "")]
     if target is not None and action == "damage":
-        missed=bool(target_token and ranged_miss_chance(data,'player',spell,target_token) and random.random()<.5)
+        missed=bool(target_token and ranged_miss_chance(data,'player',spell,target_token) and random.random()<ranged_miss_chance(data,'player',spell,target_token))
         if missed:
-            messages.append('Промах: дальнее заклинание в ближнем бою (шанс промаха 50%)')
+            messages.append('Промах: дистанция или ослепление')
             if empowered:data['pepel_empower']=False
         elif raw > 0:
             if final_damage is None and random.random()<effective_crit_chance(data):
@@ -1015,7 +1030,7 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
             messages.extend(counterattack(data,'player',target_token,result))
             if final_damage is not None:messages.append('Урон назначен ведущим; щит учтён')
             if empowered:data['pepel_empower']=False
-        if not missed:messages.extend(roll_spell_effects(data,spell,target))
+        if not missed:messages.extend(roll_spell_effects(data,spell,target,raw))
     elif action == "heal":
         result = apply_healing(target, amount)
         messages.append(f"{target['name']}: +{result['restored']} HP (избыток {result['excess']})")
@@ -1512,7 +1527,7 @@ def action_template(name, kind='damage', amount=0, hits=1, **changes):
                   damage_type='Физический', cooldown=0, cooldown_left=0, duration=0,
                   effect_kind='note', effect_value=0, effect_element='Огонь', max_stacks=1,
                   description='', needs_setup=False, shared_attack=False, manual_recharge=False, spent=False,
-                  mana_cost=0,charges_max=0,charges_left=0)
+                  mana_cost=0,charges_max=0,charges_left=0,effect_chance=100.0)
     action.update(changes)
     return action
 
@@ -1560,12 +1575,14 @@ def reach_label(ability):
 
 
 def ranged_miss_chance(data,source_token,ability,target_token):
-    if not data.get('combat_active') or ability.get('reach','Ближняя' if ability.get('damage_type')=='Физический' else 'Дальняя')!='Дальняя':return 0.0
+    from kalista_statuses import blind_chance
+    blind=blind_chance(participant(data,source_token))
+    if not data.get('combat_active') or ability.get('reach','Ближняя' if ability.get('damage_type')=='Физический' else 'Дальняя')!='Дальняя':return blind
     source_side=combat_side(data,source_token)
     for token,target in participants(data):
         if token!=source_token and (combat_side(data,token)=='Враг')!=(source_side=='Враг') and target[hp_fields(target)[0]]>0 and distance_between(data,source_token,token)=='Ближняя':
-            return .5
-    return 0.0
+            return 1-(1-.5)*(1-blind)
+    return blind
 
 
 def check_reach(data,source_token,action,target_token):
@@ -1588,11 +1605,13 @@ def counterattack(data,source_token,target_token,result):
     target=participant(data,target_token);source=participant(data,source_token)
     if source_token==target_token or target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0:return []
     if not target.get('counterattack_enabled') or result['hp_loss']<=0 or distance_between(data,source_token,target_token)!='Ближняя':return []
-    if target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0 or any(e['kind']=='fear' for e in target.get('effects',[])):return []
+    if target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0 or any(e['kind'] in ('fear','freeze') for e in target.get('effects',[])):return []
     from kalista_obstacles import blocking_wall
     if data.get('distance_mode')=='meters' and blocking_wall(data,data['positions'][target_token],data['positions'][source_token]):return []
     roll=random.random()
     if roll>=.65:return [f"{target['name']}: контратака не сработала ({roll*100:.1f}% ≥ 65%)"]
+    from kalista_statuses import blind_chance,on_hit
+    if blind_chance(target) and random.random()<blind_chance(target):return [f"{target['name']}: контратака не попала — ослепление"]
     if random.random()<evasion_chance(source):return [f"{source['name']}: уклонение от контратаки"]
     if source is data and data.get('ten_invis'):return [f"{source['name']}: контратака не попала — невидимость"]
     amount=round(target.get('sheet_profile',{}).get('attack',target.get('attack_damage',0)))
@@ -1600,7 +1619,8 @@ def counterattack(data,source_token,target_token,result):
     answer=apply_damage(source,amount,'Физический')
     message='Контратака: '+damage_message(source['name'],answer)
     record_turn_action(data,target_token,'Контратака',source['name'],message,counts=False)
-    return [message]
+    sword=next((a for a in target.get('actions',[]) if a.get('shared_attack') and a.get('kind')=='damage' and a.get('hit_effect')), {})
+    return [message]+on_hit(source,sword,amount,data['round'])
 
 
 def validate_action_state(data):
@@ -1628,6 +1648,9 @@ def validate_action_state(data):
             nonnegative_int(target.get('mana_current',-1),'Мана участника')
             nonnegative_int(target.get('mana_max',-1),'Максимум маны участника')
             if target['mana_current']>target['mana_max']: raise ValueError('Мана выше максимума')
+        for field,default,maximum in (('critical_chance',0.,95.),('critical_multiplier',2.,10.)):
+            value=target.get(field,default)
+            if isinstance(value,bool) or not isinstance(value,(int,float)) or not math.isfinite(value) or not 0<=value<=maximum:raise ValueError('Некорректные параметры крита')
         target['action_limit']=2
         nonnegative_int(target['action_limit'], 'Лимит действий')
         if target.get('sheet_profile'):
@@ -1646,6 +1669,8 @@ def validate_action_state(data):
                 target['actions'].append(action_template('Перемещение на карте',kind='note',rule='move_point',reach='Любая',description='До 30 м за одно перемещение.'))
         ids = set()
         for action in target['actions']:
+            action.setdefault('effect_chance',100)
+            if isinstance(action['effect_chance'],bool) or not isinstance(action['effect_chance'],(int,float)) or not math.isfinite(action['effect_chance']) or not 0<=action['effect_chance']<=100:raise ValueError('Шанс эффекта должен быть от 0 до 100%')
             for field in ('mana_cost','charges_max','charges_left'): action.setdefault(field,0)
             for field in ('armor_penetration','extra_dice_count','extra_dice_sides'): action.setdefault(field,0)
             action.setdefault('reach','Ближняя' if action['damage_type']=='Физический' else 'Дальняя')
@@ -1660,6 +1685,8 @@ def validate_action_state(data):
             if action['reach'] not in ('Ближняя','Дальняя','Любая'):raise ValueError('Неверная дальность атаки')
             if not isinstance(action['multiplier'],(int,float)) or not math.isfinite(action['multiplier']) or action['multiplier']<=0:raise ValueError('Неверный множитель урона')
             if action.get('rule','') not in ('','eye','stance','move_close','move_far','move_point'):raise ValueError('Неизвестное правило способности')
+            from kalista_statuses import validate_proc
+            validate_proc(action)
             validate_ability(action)
             action.setdefault('reaction',False)
             if not isinstance(action['reaction'],bool): raise ValueError('Неверный признак реакции')
@@ -1694,7 +1721,7 @@ def action_amount(source, action, critical=False):
 
 def check_action_limit(data, source_token, reaction=False):
     source = participant(data, source_token)
-    if any(e['kind']=='fear' for e in source.get('effects',[])):raise ValueError('Страх: персонаж не может действовать до окончания эффекта')
+    if any(e['kind'] in ('fear','freeze') for e in source.get('effects',[])):raise ValueError('Контроль: персонаж не может действовать до окончания страха или заморозки')
     if not data.get('combat_active') or reaction: return
     limit = 2
     count = sum(entry['source'] == source_token and entry.get('counts', True) for entry in data.get('turn_actions', []))
@@ -1791,8 +1818,8 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
                 continue
             for hit in range(action['hits']):
                 if target[hp_fields(target)[0]] <= 0 or (source[hp_fields(source)[0]]<=0 and not area_mode): break
-                if not simulation and ranged_miss_chance(candidate,source_token,action,token) and random.random()<.5:
-                    messages.append(f'Попадание {hit+1}: промах — дальняя атака в ближнем бою (50%)');continue
+                if not simulation and ranged_miss_chance(candidate,source_token,action,token) and random.random()<ranged_miss_chance(candidate,source_token,action,token):
+                    messages.append(f'Попадание {hit+1}: промах — дистанция или ослепление');continue
                 if not simulation and action['damage_type']=='Физический' and random.random()<evasion_chance(target):
                     messages.append(f"Попадание {hit+1}: {target['name']} уклонился");continue
                 landed=True
@@ -1802,8 +1829,14 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
                     if chance>0 and random.random()<chance:
                         hit_amount=outgoing_damage(source,round((action_amount(source,action,True)+extra_bonus)*action.get('multiplier',1)),action['damage_type'])
                         messages.append(f'Попадание {hit+1}: КРИТ — автоматический бросок {chance*100:g}%')
+                if not simulation and manual_amount is None and source_token.startswith('enemy:') and not source.get('sheet_profile') and source.get('critical_chance',0)>0 and random.random()<source.get('critical_chance',0)/100:
+                    hit_amount=round(hit_amount*source.get('critical_multiplier',2))
+                    messages.append(f'Попадание {hit+1}: КРИТ — автоматический бросок')
                 result=apply_damage(target, hit_amount, action['damage_type'],defense_factor=action_damage_factor(target,action))
                 messages.append(f"Попадание {hit+1}: " + damage_message(target['name'], result))
+                if not simulation:
+                    from kalista_statuses import on_hit
+                    messages.extend(on_hit(target,action,hit_amount,candidate['round']))
                 if not simulation and not reaction:messages.extend(counterattack(candidate,source_token,token,result))
         elif action['kind'] == 'heal':
             result=apply_healing(target, amount);messages.append(f"{target['name']}: +{result['restored']} HP")
@@ -1829,7 +1862,11 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
         if not rule and (action['kind']!='damage' or landed) and (action['kind'] == 'note' or action['effect_kind'] != 'note'):
             kind=action['effect_kind']
             existing=[e for e in target['effects'] if e.get('source') == action['id']]
-            if kind=='fear' and target.get('fear_immunity_turns',0)>0:
+            chance=action.get('effect_chance',100)/100
+            if kind in ('fear','freeze'):chance*=1-min(.9,max(0,target.get('control_resist',0)))
+            if not simulation and chance<1 and random.random()>=chance:
+                messages.append(f"{target['name']}: эффект не сработал ({chance*100:g}%)")
+            elif kind in ('fear','freeze') and target.get('fear_immunity_turns',0)>0:
                 messages.append(f"{target['name']}: страх не наложен — иммунитет")
             elif len(existing) < action['max_stacks']:
                 add_effect(target, dict(kind=kind,name=action['name'],value=action['effect_value'],duration=action['duration'] or None,

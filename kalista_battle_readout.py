@@ -4,9 +4,9 @@ import re
 def effect_label(effect):
     n=effect.get('duration');kind=effect.get('kind');name=effect['name']
     if n is None:return name+' · бессрочно'
-    if kind=='fear':return f'{name} · пропуск ещё {n} ходов'
-    if kind in ('dot','hot'):return f'{name} · ещё {n} срабатываний в конце хода'
-    if kind=='weakness':return f'{name} · ещё {n} личных ходов'
+    if kind in ('fear','freeze'):return f'{name} · пропуск ещё {n} ходов'
+    if kind in ('dot','hot','bleed'):return f'{name} · ещё {n} срабатываний в конце хода'
+    if kind in ('weakness','chill','slow','blind','armor_break'):return f'{name} · ещё {n} личных ходов'
     return f'{name} · ещё {n} полных раундов'
 
 def result_rows(entry):
