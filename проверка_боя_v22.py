@@ -47,19 +47,19 @@ ally=d['ally'];ally['resists']['Огонь']=0
 fire=next(s for s in d['spells'] if s['school']=='Огонь');preview=e.spell_damage_preview(d,fire,ally,100);hp=ally['hp'];answer=e.spell_damage_apply(d,fire,ally,100)
 assert preview['incoming']==answer['incoming']==70 and hp-ally['hp']==70
 e.begin_actor_turn(d);assert not d['ally']['defensive_stance'] and ability(d,'Защитная стойка')['cooldown_left']==0
-# Physical dodge happens before shields and cancels the trigger for counterattack.
+# Physical dodge happens before shields and still provokes a counterattack attempt.
 d=fresh();foe=d['enemies'][0];attack=next(a for a in foe['actions'] if a['kind']=='damage');hp=d['ally']['hp'];foe_hp=foe['hp'];e.add_effect(d['ally'],dict(kind='shield',name='Щит',value=200))
 with patch.object(e.random,'random',return_value=.1):messages=e.perform_action(d,'enemy:1',attack['id'],['ally'])
-assert d['ally']['hp']==hp and d['enemies'][0]['hp']==foe_hp and d['ally']['effects'][0]['value']==200 and any('уклонился' in x for x in messages)
+assert d['ally']['hp']==hp and d['enemies'][0]['hp']==foe_hp-302 and d['ally']['effects'][0]['value']==200 and any('уклонился' in x for x in messages)
 # Successful melee HP loss triggers a normal sword counter, no action charge and no recursion.
 d=fresh();foe=d['enemies'][0];foe['counterattack_enabled']=True;attack=next(a for a in foe['actions'] if a['kind']=='damage');hp=d['ally']['hp'];foe_hp=foe['hp']
 with patch.object(e.random,'random',side_effect=[.99,.1,.99]):messages=e.perform_action(d,'enemy:1',attack['id'],['ally'])
 assert hp-d['ally']['hp']==81 and foe_hp-d['enemies'][0]['hp']==302
 assert len([x for x in d['turn_actions'] if x['name']=='Контратака'])==1 and not next(x for x in d['turn_actions'] if x['name']=='Контратака')['counts']
-# A shield that absorbs the hit prevents the HP-based counter; DoT never triggers dodge/counters.
+# A shield does not prevent the 65% attempt; a failed roll deals no counter damage. DoT never triggers it.
 d=fresh();foe=d['enemies'][0];attack=next(a for a in foe['actions'] if a['kind']=='damage');e.add_effect(d['ally'],dict(kind='shield',name='Щит',value=1000))
 with patch.object(e.random,'random',return_value=.99):messages=e.perform_action(d,'enemy:1',attack['id'],['ally'])
-assert not any('Контратака:' in x for x in messages)
+assert not any('Контратака:' in x for x in messages) and any('контратака не сработала' in x for x in messages)
 d['ally']['effects']=[];e.add_effect(d['ally'],dict(kind='dot',name='Горение',value=100,duration=3,element='Огонь'));hp=d['ally']['hp']
 with patch.object(e.random,'random',side_effect=AssertionError('DoT should not roll')):e.tick_periodic(d['ally'])
 assert d['ally']['hp']<hp

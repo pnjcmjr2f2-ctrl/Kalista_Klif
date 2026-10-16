@@ -269,7 +269,7 @@ def migrate(saved):
             existing={a['name'] for a in ally['actions']}
             ally['actions'] += [a for a in warrior_actions() if a['name'] not in existing]
             ally['counterattack_enabled']=True
-            ally['sheet_profile']['abilities']='Видящий — позволяет видеть суть вещей.\nСкорострел — две атаки мечом за одно действие.\nКонтратака — 65% после потери HP от прямого ближнего удара; обычный удар мечом без расхода действий.\nДесница Ока — активная способность, +100% урона до конца текущего хода, один раз за бой.'
+            ally['sheet_profile']['abilities']='Видящий — позволяет видеть суть вещей.\nСкорострел — две атаки мечом за одно действие.\nКонтратака — 65% после каждой прямой физической или магической атаки с дистанции до 5 м, даже при промахе, уклонении или поглощении щитом; обычный удар мечом без расхода действий.\nДесница Ока — активная способность, +100% урона до конца текущего хода, один раз за бой.'
             fill_warrior_equipment(ally)
         invalidate_player_requests(data,'Правила боя обновились; предложи действие заново')
     data.setdefault('map_revision',0)
@@ -1045,6 +1045,7 @@ def cast_spell(data, spell, target, crit=False, final_damage=None, shield_amount
         missed=bool(target_token and ranged_miss_chance(data,'player',spell,target_token) and random.random()<ranged_miss_chance(data,'player',spell,target_token))
         if missed:
             messages.append('Промах: дистанция или ослепление')
+            messages.extend(counterattack(data,'player',target_token,{'hp_loss':0}))
             if empowered:data['pepel_empower']=False
         elif raw > 0:
             if final_damage is None and random.random()<effective_crit_chance(data):
@@ -1364,7 +1365,7 @@ def imported_friend():
     ally['counterattack_enabled']=True
     ensure_player_sheet(ally)
     fill_warrior_equipment(ally)
-    profile['abilities']='Скорострел — два удара по 70% атаки за одно действие.\nКонтратака — 65% после потери HP от прямого ближнего удара; обычный удар мечом без расхода действий.\nДесница Ока — +100% урона до конца текущего хода, один раз за бой.'
+    profile['abilities']='Скорострел — два удара по 70% атаки за одно действие.\nКонтратака — 65% после каждой прямой физической или магической атаки с дистанции до 5 м, даже при промахе, уклонении или поглощении щитом; обычный удар мечом без расхода действий.\nДесница Ока — +100% урона до конца текущего хода, один раз за бой.'
     return ally
 
 
@@ -1631,7 +1632,6 @@ def counterattack(data,source_token,target_token,result):
     target=participant(data,target_token);source=participant(data,source_token)
     if source_token==target_token or target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0:return []
     if not target.get('counterattack_enabled') or distance_between(data,source_token,target_token)!='Ближняя':return []
-    if result['hp_loss']<=0:return [f"{target['name']}: контратака не проверяется — попадание не сняло HP (щит поглотил {result.get('absorbed',0)})"]
     if target[hp_fields(target)[0]]<=0 or source[hp_fields(source)[0]]<=0 or any(e['kind'] in ('fear','freeze') for e in target.get('effects',[])):return []
     from kalista_obstacles import blocking_wall
     if data.get('distance_mode')=='meters' and blocking_wall(data,data['positions'][target_token],data['positions'][source_token]):return []
@@ -1851,9 +1851,13 @@ def perform_action(data, source_token, action_id, victims, critical=False, react
             for hit in range(action['hits']):
                 if target[hp_fields(target)[0]] <= 0 or (source[hp_fields(source)[0]]<=0 and not area_mode): break
                 if not simulation and ranged_miss_chance(candidate,source_token,action,token) and random.random()<ranged_miss_chance(candidate,source_token,action,token):
-                    messages.append(f'Попадание {hit+1}: промах — дистанция или ослепление');continue
+                    messages.append(f'Попадание {hit+1}: промах — дистанция или ослепление')
+                    if not reaction:messages.extend(counterattack(candidate,source_token,token,{'hp_loss':0}))
+                    continue
                 if not simulation and action['damage_type']=='Физический' and random.random()<evasion_chance(target):
-                    messages.append(f"Попадание {hit+1}: {target['name']} уклонился");continue
+                    messages.append(f"Попадание {hit+1}: {target['name']} уклонился")
+                    if not reaction:messages.extend(counterattack(candidate,source_token,token,{'hp_loss':0}))
+                    continue
                 landed=True
                 hit_amount=amount
                 if not simulation and manual_amount is None and action['shared_attack'] and source.get('sheet_profile'):

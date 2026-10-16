@@ -31,7 +31,7 @@ def cast_area_spell(data,spell,center,final_damage=None):
     for token in tokens:
         target=e.participant(candidate,token)
         if (target is candidate and candidate.get('ten_invis')) or (e.ranged_miss_chance(candidate,'player',spell,token) and e.random.random()<e.ranged_miss_chance(candidate,'player',spell,token)):
-            messages.append(target['name']+': промах');continue
+            messages.append(target['name']+': промах');counters.append((token,{'hp_loss':0}));continue
         amount=raw
         if final_damage is None and e.random.random()<e.effective_crit_chance(candidate):amount=round(raw*1.5);messages.append(target['name']+': КРИТ ×1,5')
         result=e.spell_damage_apply(candidate,spell,target,amount,final_damage);messages.append(e.damage_message(target['name'],result))
